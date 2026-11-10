@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-11-10T00:00:00.000Z",
+  "updatedAt": "2026-11-11T00:00:00.000Z",
   "note": "由管理后台维护；仅存 PBKDF2-SHA256 加盐摘要，不含明文密码。覆盖仓库 data/accounts.json 并提交后对所有访客生效。",
   "initialPassword": {
     "salt": "57614c86394f497fe7936a779da4388d",
@@ -11,8 +11,8 @@
   },
   "accounts": [
     {
-      "email": "admin@shortvideo.studio",
-      "name": "初始管理员",
+      "email": "ericzheng20260601@gmail.com",
+      "name": "管理员",
       "role": "admin",
       "enabled": true,
       "expiresAt": null,

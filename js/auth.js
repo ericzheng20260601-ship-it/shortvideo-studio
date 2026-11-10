@@ -13,6 +13,10 @@ export const ITERATIONS = 120000;
 export const PASSWORD_RULE = '至少 8 位，且同时包含字母和数字';
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// 管理员邮箱：与 data/accounts.json 保持一致。
+export const ADMIN_EMAIL = 'ericzheng20260601@gmail.com';
+const LEGACY_ADMIN_EMAIL = 'admin@shortvideo.studio';
+
 // 内置兜底名单：与 data/accounts.json 一致（仅摘要）。名单文件加载失败时仍可登录。
 const FALLBACK_INITIAL = {
   salt: '57614c86394f497fe7936a779da4388d',
@@ -22,7 +26,7 @@ const FALLBACK_INITIAL = {
   note: '初始登录密码由管理后台配置；此处仅存 PBKDF2 摘要',
 };
 const FALLBACK_ACCOUNTS = [{
-  email: 'admin@shortvideo.studio', name: '初始管理员', role: 'admin',
+  email: ADMIN_EMAIL, name: '管理员', role: 'admin',
   enabled: true, expiresAt: null, note: '首次登录后请立即修改密码', createdAt: '2026/11/10',
 }];
 
@@ -30,6 +34,31 @@ let remote = null;
 let remoteError = false;
 
 export const normEmail = v => (v || '').trim().toLowerCase();
+
+/*
+ * 一次性迁移：内置初始管理员邮箱变更。
+ * 管理后台的增删/改密会写一份本机草稿（accountsLocal），它优先于仓库名单；
+ * 若旧浏览器里的草稿仍是旧邮箱，新名单会被挡住、旧会话也会被登出，因此在此纠正。
+ * 只处理内置的旧管理员邮箱，不影响管理员后来手动添加的其他账号。
+ */
+function migrateLegacyAdmin() {
+  try {
+    const list = store.get('accountsLocal', null);
+    if (Array.isArray(list) && list.some(a => normEmail(a.email) === LEGACY_ADMIN_EMAIL)) {
+      const alreadyNew = list.some(a => normEmail(a.email) === ADMIN_EMAIL);
+      const next = list
+        .filter(a => !(alreadyNew && normEmail(a.email) === LEGACY_ADMIN_EMAIL))
+        .map(a => normEmail(a.email) === LEGACY_ADMIN_EMAIL ? { ...a, email: ADMIN_EMAIL } : a);
+      store.set('accountsLocal', next);
+    }
+    const s = store.get('session', null);
+    if (s && normEmail(s.email) === LEGACY_ADMIN_EMAIL) {
+      store.set('session', { ...s, email: ADMIN_EMAIL });
+    }
+  } catch (_) { /* localStorage 不可用时跳过，仍以仓库名单为准 */ }
+}
+migrateLegacyAdmin();
+
 export const validPassword = p => typeof p === 'string' && p.length >= 8 && /[A-Za-z]/.test(p) && /\d/.test(p);
 export const usingInitial = a => !a.salt || !a.hash;
 
