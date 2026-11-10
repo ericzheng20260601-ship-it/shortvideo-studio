@@ -74,7 +74,8 @@ export default {
     if (preset && TRACKS.some(t => t.id === preset)) state.track = preset;
     return `
     ${pageHead('爆款雷达','探索 TikTok 上正在流行的带货内容，按热度找方向',
-      `<button class="btn" id="btnRefresh">${icon('refresh',14)} 刷新榜单</button>
+      `<button class="btn" id="btnToLibrary">${icon('folder',14)} 抽取 5 条到素材库</button>
+       <button class="btn" id="btnRefresh">${icon('refresh',14)} 刷新榜单</button>
        <button class="btn btn-primary" id="btnPick">${icon('target',14)} 按赛道抽签</button>`)}
     <div class="filter-bar">
       <span class="f-label">赛道</span>
@@ -147,6 +148,10 @@ export default {
     $('#durSel', root).onchange = e => { state.dur = e.target.value; draw(); };
     $('#aiSel', root).onchange = e => { state.ai = e.target.value; draw(); };
     $('#favOnly', root).onclick = () => { state.favOnly = !state.favOnly; $('#favOnly', root).classList.toggle('active', state.favOnly); draw(); };
+    $('#btnToLibrary', root).onclick = () => {
+      bus.navigate('library', { drawClips:true, track:state.track });
+      toast('去素材库抽 5 条','可切换按热度或随机抽取','');
+    };
     $('#btnRefresh', root).onclick = () => { toast('榜单已刷新','演示数据按当前筛选重新排序'); draw(); };
     $('#btnPick', root).onclick = () => {
       const list = filtered();

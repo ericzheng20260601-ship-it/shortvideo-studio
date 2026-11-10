@@ -68,8 +68,18 @@ export default {
           <div class="grid g2">
             <div class="field"><label class="field-label" for="narrStyle">解说风格</label>
               <select class="select" id="narrStyle">${NARRATION.map(s=>`<option value="${esc(s)}" ${s==='共情叙事'?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
-            <div class="field"><label class="field-label" for="batchN">批量生成数量</label>
-              <select class="select" id="batchN"><option value="1">1 条</option><option value="2" selected>2 条</option><option value="3">3 条</option><option value="5">5 条</option></select></div>
+            <div class="field"><label class="field-label" for="batchN">批量生成数量 <span class="muted small">（1–50 条，单次最多 50）</span></label>
+              <div class="row" style="gap:6px">
+                <button class="btn btn-sm btn-ghost" id="batchMinus" type="button" title="减 1">−</button>
+                <input class="input" id="batchN" type="number" min="1" max="50" step="1" value="2" inputmode="numeric" style="width:84px;text-align:center;padding:9px 6px" />
+                <button class="btn btn-sm btn-ghost" id="batchPlus" type="button" title="加 1">+</button>
+                <span class="small muted">条工程包</span>
+              </div>
+              <div class="batch-presets" id="batchPresets">
+                ${[1,2,3,5,10,20,30,50].map(n=>`<button class="chip ${n===2?'active':''}" type="button" data-batch="${n}">${n} 条</button>`).join('')}
+              </div>
+              <div class="field-hint" id="batchHint">将生成 2 条工程包，每条含 3 段字幕 / 1 段配乐。</div>
+            </div>
           </div>
           <div class="row row-wrap"><span class="small muted">赛道</span>
             <select class="mini-select" id="autoTrack"><option value="knowledge">知识科普</option><option value="pet-chew">宠物磨牙</option><option value="pet-toy">宠物玩具</option><option value="pet-train">宠物训练</option><option value="skincare">女性护肤</option><option value="fragrance">香水香氛</option></select>
@@ -101,6 +111,30 @@ export default {
 
   mount(root) {
     let file = null, meta = { name:'', size:0, duration:0, w:0, h:0, demo:false }, frames = [], busy = false;
+    let showAllJobs = false;
+
+    // 批量数量口径 A-02：1–50 条，越界自动钳制，快捷档位与输入框双向同步
+    const syncBatchUI = () => {
+      const v = Number($('#batchN', root).value);
+      $$('[data-batch]', root).forEach(b => b.classList.toggle('active', Number(b.dataset.batch) === v));
+    };
+    const clampN = () => {
+      const el = $('#batchN', root), raw = el.value.trim();
+      let n = Number.parseInt(raw, 10);
+      if (!Number.isFinite(n)) n = 2;
+      const capped = Math.min(50, Math.max(1, n));
+      if (String(capped) !== raw) {
+        el.value = String(capped);
+        toast(n > 50 ? '单次最多 50 条' : '数量已调整', n > 50 ? '已按上限 50 条生成' : '请输入 1–50 之间的整数', n > 50 ? 'warn' : '');
+      }
+      syncBatchUI();
+      $('#batchHint', root).textContent = capped >= 50
+        ? '已达上限：本次生成 50 条工程包，右侧可展开查看全部结果。'
+        : capped >= 20
+          ? `将生成 ${capped} 条工程包，大批量结果已做折叠展示。`
+          : `将生成 ${capped} 条工程包，每条含 3 段字幕 / 1 段配乐。`;
+      return capped;
+    };
 
     const setFile = (f, demo = false) => {
       file = demo ? null : f;
@@ -137,15 +171,24 @@ export default {
 
     const jobsHTML = () => {
       const jobs = store.get('autoJobs', []);
+      const visible = showAllJobs ? jobs : jobs.slice(0, 8);
+      const list = $('#jobList', root);
       $('#jobCount', root).textContent = `${jobs.length} 条`;
-      $('#jobList', root).innerHTML = jobs.length ? jobs.slice(0,8).map(j=>`<div class="block hoverable">
+      const scroll = showAllJobs && jobs.length > 8;
+      list.style.maxHeight = scroll ? '520px' : '';
+      list.style.overflowY = scroll ? 'auto' : '';
+      list.style.paddingRight = scroll ? '6px' : '';
+      list.innerHTML = (jobs.length ? visible.map(j=>`<div class="block hoverable">
         <div class="block-head"><b>${esc(j.title)}</b><span class="badge ${j.demo?'amber':''}">${esc(j.style)}</span></div>
         <p class="small muted">${esc(j.createdAt)} · ${j.duration}s · 3 段字幕 · 1 段配乐</p>
         <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
           <button class="btn btn-sm" data-job-review="${j.id}">送去评估</button>
           <button class="btn btn-sm" data-job-editor="${j.id}">送到剪辑台</button>
           <button class="btn btn-sm btn-ghost" data-job-download="${j.id}">${icon('download',12)} 工程包</button>
-        </div></div>`).join('') : '<div class="empty">还没有生成结果</div>';
+        </div></div>`).join('') : '<div class="empty">还没有生成结果</div>')
+        + (jobs.length > 8 ? `<div class="row" style="justify-content:center;margin-top:10px"><button class="btn btn-sm" id="btnToggleJobs">${showAllJobs ? '收起结果' : `展开全部 ${jobs.length} 条`} ${icon(showAllJobs ? 'chevronUp' : 'chevronDown',12)}</button></div>` : '');
+      const toggle = $('#btnToggleJobs', root);
+      if (toggle) toggle.onclick = () => { showAllJobs = !showAllJobs; jobsHTML(); };
       $$('[data-job-review]', root).forEach(b=>b.onclick=()=>bus.navigate('review',{title:store.get('autoJobs',[]).find(j=>j.id===b.dataset.jobReview)?.title}));
       $$('[data-job-editor]', root).forEach(b=>b.onclick=()=>{
         const j = store.get('autoJobs',[]).find(x=>x.id===b.dataset.jobEditor);
@@ -187,7 +230,7 @@ export default {
       const calib = $('#calib', root).value.trim();
       const style = $('#narrStyle', root).value;
       const track = $('#autoTrack', root).value;
-      const n = Number($('#batchN', root).value) || 1;
+      const n = clampN();
       const d = meta.duration || 30;
       // 预排六步节拍：避免标签页切到后台时定时器被浏览器节流，导致流程停在中途
       const ticks = AUTO_STEPS.map((_, i) => new Promise(r => setTimeout(r, 380 * (i + 1))));
@@ -217,10 +260,15 @@ export default {
           style: k === 0 ? style : NARRATION[(NARRATION.indexOf(style)+k) % NARRATION.length],
           duration:d, track, createdAt:store.now(), demo:meta.demo,
           frames:frames.map(f=>f.t), script, suggestion:{ aspect:'16:9', resolution:'1080P', subtitles:3, music:1, keyframes:3 } };
-        batch.push(j); store.add('autoJobs', j);
-        store.add('works', { id:store.uid('w'), title:j.title, track, createdAt:store.now().slice(0,10) });
+        batch.push(j);
       }
+      // A-02：大批量一次性写入，避免 50 条时逐条序列化 localStorage
+      const newestFirst = batch.slice().reverse();
+      store.set('autoJobs', [...newestFirst, ...store.get('autoJobs', [])].slice(0, 300));
+      const works = newestFirst.map(j => ({ id:store.uid('w'), title:j.title, track, createdAt:store.now().slice(0,10) }));
+      store.set('works', [...works, ...store.get('works', [])].slice(0, 300));
       log(`完成：生成 ${n} 条工程建议，含 3 段字幕 / 1 段配乐。`);
+      if (n >= 20) log(`批量写入：${n} 条工程包已保存到本机（最多保留最近 300 条），右侧可展开查看。`);
       $('#stepStatus', root).textContent = `已完成 · ${n} 条工程包`;
       jobsHTML();
       busy = false;
@@ -235,8 +283,17 @@ export default {
     dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); };
     $('#btnDemoFile', root).onclick = () => { setFile(null, true); toast('已载入示例元数据','30.4 MB · 66.8 秒 · 1916×1076'); };
     $('#btnClearFile', root).onclick = () => { file=null; meta={name:'',size:0,duration:0,w:0,h:0,demo:false}; $('#fileBox',root).innerHTML=''; paintSuggest(); };
+    $$('[data-batch]', root).forEach(b => b.onclick = () => { $('#batchN', root).value = b.dataset.batch; clampN(); });
+    $('#batchN', root).oninput = syncBatchUI;
+    $('#batchN', root).onblur = clampN;
+    $('#batchMinus', root).onclick = () => {
+      const el = $('#batchN', root); el.value = Math.max(1, (Number.parseInt(el.value, 10) || 2) - 1); clampN();
+    };
+    $('#batchPlus', root).onclick = () => {
+      const el = $('#batchN', root); el.value = Math.min(50, (Number.parseInt(el.value, 10) || 1) + 1); clampN();
+    };
     $('#btnStart', root).onclick = start;
     $('#btnStart2', root).onclick = start;
-    paintSuggest(); jobsHTML();
+    paintSuggest(); jobsHTML(); clampN();
   },
 };

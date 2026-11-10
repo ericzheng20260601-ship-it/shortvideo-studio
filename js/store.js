@@ -36,6 +36,8 @@ const SEED = {
   ],
   autoJobs: [],
   favorites: ['r1','r6'],
+  // L-01：达人视频素材默认入库 5 条（爆款雷达中按热度抽取、避开默认收藏 r1/r6）
+  creatorClips: ['r2','r3','r4','r8','r5'],
   checklist: {},
   settings: { quoteOffset:0, siteName:'短视频创作台', autoPlay:true },
   logs: [],
