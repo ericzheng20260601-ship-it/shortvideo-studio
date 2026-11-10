@@ -29,7 +29,14 @@ export function modal({ title, desc = '', body = '', actions = [], wide = false,
     const b = document.createElement('button');
     b.className = 'btn ' + (a.primary ? 'btn-primary' : (a.danger ? 'btn-danger' : ''));
     b.textContent = a.label;
-    b.onclick = async () => { if (a.onClick) { const r = await a.onClick(close); if (r !== false) close(); } else close(); };
+    // close:false 的 action 自己接管关闭（例如成功后同步打开下一个弹窗），
+    // 避免依赖 setTimeout 在后台标签页被节流而丢失后续界面。
+    b.onclick = async () => {
+      if (a.onClick) {
+        const r = await a.onClick(close);
+        if (r !== false && a.close !== false) close();
+      } else close();
+    };
     foot.appendChild(b);
   });
   if (onMount) onMount(root, close);

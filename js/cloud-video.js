@@ -229,7 +229,7 @@ export async function initCloudVideo(root) {
       status.textContent = '未登录 · 上传需 WorkBuddy 账号';
       count.textContent = '—';
       list.innerHTML = `<div class="cloud-vempty">${icon('cloud', 28)}
-        <div><b>登录后查看与上传云端原视频</b><div class="small muted" style="margin-top:5px">文件会存入应用云存储，元数据进入云数据库；授权码门不受影响。</div></div>
+        <div><b>登录后查看与上传云端原视频</b><div class="small muted" style="margin-top:5px">文件会存入应用云存储，元数据进入云数据库；邮箱登录门不受影响。</div></div>
         <button class="btn btn-primary btn-sm" id="cvLoginInline">使用 WorkBuddy 登录</button></div>`;
       hint.textContent = '按需登录：不登录时，文案、素材、剪辑工程等本地功能全部照常可用。';
       btnLogin.innerHTML = `${icon('shield', 14)} 使用 WorkBuddy 登录`;
@@ -266,7 +266,7 @@ export async function initCloudVideo(root) {
   const requireLogin = () => modal({
     title: '需要登录 WorkBuddy 账号',
     desc: '上传与播放云端原视频需要真实登录会话',
-    body: '<div class="notice-box">云存储按登录会话校验权限，不接受匿名上传。授权码门仍是本站的访问门槛；这里的账号登录只用于云端视频，不影响其他本地功能。</div>',
+    body: '<div class="notice-box">云存储按登录会话校验权限，不接受匿名上传。邮箱 + 密码登录仍是本站的访问门槛；这里的 WorkBuddy 账号登录只用于云端视频，不影响其他本地功能。</div>',
     actions: [
       { label: '暂不登录' },
       { label: '使用 WorkBuddy 登录', primary: true, onClick: async () => {

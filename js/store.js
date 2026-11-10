@@ -41,7 +41,9 @@ const SEED = {
   checklist: {},
   settings: { quoteOffset:0, siteName:'短视频创作台', autoPlay:true },
   logs: [],
-  codesDraft: [],
+  // A-02：本机账号名单草稿与初始密码草稿（null = 跟随仓库名单）
+  accountsLocal: null,
+  initialPasswordLocal: null,
   counters: { exports:0 },
 };
 

@@ -17,20 +17,25 @@
         <div class="brand-logo" id="gateLogo"></div>
         <div>
           <div class="gate-title">短视频创作台</div>
-          <div class="gate-sub">一站式创作工作台 · 授权访问</div>
+          <div class="gate-sub">一站式创作工作台 · 邮箱登录</div>
         </div>
       </div>
       <div class="gate-notice">
         <span class="notice-dot"></span>
-        <span>本站为邀请制。请在管理后台获取授权码后进入。</span>
+        <span>本站为邀请制。请使用管理员开通的邮箱与初始登录密码进入。</span>
       </div>
-      <label class="field-label" for="gateCode">授权码</label>
-      <input id="gateCode" class="input input-lg" type="text" autocomplete="off" spellcheck="false" placeholder="例如 CT-XXXX-XXXX" />
+      <label class="field-label" for="gateEmail">邮箱</label>
+      <input id="gateEmail" class="input input-lg" type="email" autocomplete="username" spellcheck="false" placeholder="name@company.com" />
+      <label class="field-label gate-label-2" for="gatePass">登录密码</label>
+      <div class="gate-pass-wrap">
+        <input id="gatePass" class="input input-lg" type="password" autocomplete="current-password" placeholder="初始密码或已修改的密码" />
+        <button id="gateEye" class="gate-eye" type="button" title="显示密码" aria-label="显示密码"></button>
+      </div>
       <div id="gateError" class="gate-error" hidden></div>
-      <button id="gateSubmit" class="btn btn-primary btn-block">验证并进入工作台</button>
+      <button id="gateSubmit" class="btn btn-primary btn-block">登录工作台</button>
       <div class="gate-foot">
-        <span id="gateStatus">正在读取授权名单…</span>
-        <button id="gateHelp" class="link-btn">没有授权码？</button>
+        <span id="gateStatus">正在读取账号名单…</span>
+        <button id="gateHelp" class="link-btn">无法登录？</button>
       </div>
     </div>
   </div>

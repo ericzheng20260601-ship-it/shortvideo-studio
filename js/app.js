@@ -2,7 +2,8 @@ import { icon } from './icons.js';
 import { $, $$, toast, modal, esc, pad, fmtDateCN, bindCollapse } from './ui.js';
 import { store } from './store.js';
 import { bus } from './bus.js';
-import { loadAllowlist, verifyCode, setSession, clearSession, getSession, revalidate, logAccess, isAdmin, allowlistIsOffline } from './auth.js';
+import { loadAccounts, verifyLogin, setSession, clearSession, getSession, revalidate, logAccess, isAdmin, accountsIsOffline } from './auth.js';
+import { openChangePassword } from './password-dialog.js';
 import { cloudEnabled, staticFallback, cloudNotice, restoreCloudAuth, startCloudLogin, signOutCloud } from './cloud.js';
 import { applyRadarItems, cachedItems } from './radar-source.js';
 
@@ -48,7 +49,7 @@ function renderNav(active) {
     const n = NAV.find(x => x.id === btn.dataset.nav);
     if (n.adminOnly && !isAdmin()) {
       modal({ title:'需要管理员权限', desc:'访问授权与名单管理仅对管理员开放。',
-        body:'<div class="notice-box">当前账号为普通创作者。如需管理权限，请联系管理员签发 admin 角色的授权码。</div>' });
+        body:'<div class="notice-box">当前账号为普通创作者。如需管理权限，请联系管理员在「管理后台 → 账号与密码」中把该邮箱设为管理员。</div>' });
       return;
     }
     navigate(n.id);
@@ -100,6 +101,8 @@ function showShell(session) {
   $('#sideUserName').textContent = session.name || '创作者';
   $('#sideAvatar').textContent = (session.name || '创')[0];
   $('#topAvatar').textContent = (session.name || '创')[0];
+  const footSub = $('.side-foot-sub');
+  if (footSub) footSub.textContent = session.email || '本机数据';
   bus.session = session;
   renderPage();
   tickClock();
@@ -121,44 +124,53 @@ async function boot() {
   // OAuth 回调必须在授权门与路由之前分发
   bus.cloudSession = await restoreCloudAuth();
   updateCloudChip();
-  const r = await loadAllowlist();
+  await loadAccounts();
   const s = await revalidate();
   const status = $('#gateStatus');
-  if (status) status.textContent = allowlistIsOffline() ? '名单文件未加载，使用内置初始名单' : '授权名单已加载';
+  if (status) status.textContent = accountsIsOffline() ? '名单文件未加载，使用内置初始账号' : '账号名单已加载';
   if (s) showShell(s); else showGate();
 }
 
 function showGate() {
   $('#shell').hidden = true;
   $('#gate').hidden = false;
-  const input = $('#gateCode'), err = $('#gateError');
-  input.value = '';
+  const emailEl = $('#gateEmail'), passEl = $('#gatePass'), err = $('#gateError');
+  emailEl.value = ''; passEl.value = ''; passEl.type = 'password';
+  const eye = $('#gateEye');
+  eye.textContent = '显示';
+  eye.onclick = () => {
+    const show = passEl.type === 'password';
+    passEl.type = show ? 'text' : 'password';
+    eye.textContent = show ? '隐藏' : '显示';
+    eye.title = show ? '隐藏密码' : '显示密码';
+  };
   const submit = async () => {
     err.hidden = true;
-    const code = input.value.trim();
-    if (!code) { err.textContent = '请输入授权码'; err.hidden = false; return; }
-    const res = await verifyCode(code);
+    const res = await verifyLogin(emailEl.value, passEl.value);
     if (!res.ok) {
-      logAccess(`验证失败：${res.reason}`);
+      logAccess(`登录失败：${res.reason}`);
       err.textContent = res.reason; err.hidden = false;
-      input.focus(); return;
+      (passEl.value ? emailEl : passEl).focus();
+      return;
     }
-    const s = { code:code.toUpperCase(), name:res.entry.name, role:res.entry.role, loginAt:store.now() };
+    const s = { email:res.email, name:res.account.name, role:res.account.role,
+      loginAt:store.now(), usingInitial:res.usingInitial, credTag:res.credTag };
     setSession(s);
-    logAccess(`${res.entry.name} 通过授权进入工作台`);
+    logAccess(`${res.account.name}（${res.email}）登录工作台`);
     showShell(s);
-    toast('欢迎回来', `${res.entry.name}，今天也要做好创作`);
+    toast('欢迎回来', `${res.account.name}，今天也要做好创作`);
+    if (res.usingInitial) setTimeout(() => toast('安全提示', '当前使用初始密码，可在右上角头像菜单修改', 'warn'), 1100);
   };
   $('#gateSubmit').onclick = submit;
-  input.onkeydown = e => { if (e.key === 'Enter') submit(); };
+  [emailEl, passEl].forEach(el => el.onkeydown = e => { if (e.key === 'Enter') submit(); });
   $('#gateHelp').onclick = () => modal({
-    title:'如何获得授权', desc:'本工作台采用邀请制访问',
-    body:`<div class="block"><div class="block-head"><b>1 · 找管理员</b></div><div class="small muted">授权码由「管理后台 → 访问授权」签发，可设置有效期与角色。</div></div>
-      <div class="block"><div class="block-head"><b>2 · 输入授权码</b></div><div class="small muted">名单只保存授权码的 SHA-256 摘要，仓库中不出现明文；管理员签发后需更新仓库名单文件才会对所有人生效。</div></div>
-      <div class="block"><div class="block-head"><b>3 · 开始创作</b></div><div class="small muted">文案、剪辑工程与素材保存在本机浏览器，刷新不丢失；可在管理后台导出工程快照提交到仓库。</div></div>`,
+    title:'如何登录工作台', desc:'本工作台采用邀请制，按邮箱开通账号',
+    body:`<div class="block"><div class="block-head"><b>1 · 找管理员开通</b></div><div class="small muted">管理员在「管理后台 → 账号与密码」添加你的邮箱，并告知初始登录密码。</div></div>
+      <div class="block"><div class="block-head"><b>2 · 用邮箱 + 密码登录</b></div><div class="small muted">名单只保存 PBKDF2 加盐摘要，仓库与页面里都不出现明文密码；新账号需管理员导出名单并提交仓库后才能在其他设备登录。</div></div>
+      <div class="block"><div class="block-head"><b>3 · 首次登录改密码</b></div><div class="small muted">右上角头像 → 账户信息 → 修改密码。改完本机立即生效；忘记密码可请管理员「重置为初始密码」。</div></div>`,
     actions:[{ label:'知道了', primary:true }],
   });
-  setTimeout(() => input.focus(), 100);
+  setTimeout(() => emailEl.focus(), 100);
 }
 
 // 顶部与侧边通用交互
@@ -191,9 +203,16 @@ function wireChrome() {
   $('#topAvatar').onclick = () => {
     const s = getSession();
     modal({ title:'账户信息', desc:`${s?.name || '创作者'} · ${s?.role === 'admin' ? '管理员' : '创作者'}`,
-      body:`<div class="block"><div class="block-head"><b>登录时间</b></div><div class="small muted">${esc(s?.loginAt || '—')}</div></div>
+      body:`<div class="block"><div class="block-head"><b>登录邮箱</b></div><div class="small muted mono">${esc(s?.email || '—')}</div></div>
+        <div class="block"><div class="block-head"><b>密码状态</b><span class="badge ${s?.usingInitial ? 'amber' : ''}">${s?.usingInitial ? '初始密码' : '已自定义'}</span></div>
+          <div class="small muted">${s?.usingInitial ? '建议尽快修改为仅自己知道的密码。' : '修改后本机立即生效；其他设备需同步账号名单。'}</div></div>
+        <div class="block"><div class="block-head"><b>登录时间</b></div><div class="small muted">${esc(s?.loginAt || '—')}</div></div>
         <div class="block"><div class="block-head"><b>数据位置</b></div><div class="small muted">本机浏览器存储；管理后台可导出工程快照提交到仓库。</div></div>`,
-      actions:[{ label:'退出登录', onClick:()=>{ clearSession(); logAccess('退出登录'); location.hash='#/home'; location.reload(); } },{ label:'关闭', primary:true }] });
+      actions:[
+        { label:'修改密码', close:false, onClick:(close)=>{ close(); openChangePassword(); } },
+        { label:'退出登录', onClick:()=>{ clearSession(); logAccess('退出登录'); location.hash='#/home'; location.reload(); } },
+        { label:'关闭', primary:true },
+      ] });
   };
   $('#sideMore').onclick = () => $('#btnHelp').click();
   const chip = $('.cloud-chip');
