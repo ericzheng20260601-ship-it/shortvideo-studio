@@ -407,3 +407,25 @@ a{color:inherit;text-decoration:none}
 .clip-row:hover{border-color:var(--teal-line);transform:translateX(3px)}
 .clip-thumb{flex:none;width:42px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:19px}
 .clip-row b{display:block;line-height:1.4}
+/* 云端原视频 */
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none!important}
+.cloud-vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px}
+.cloud-vcard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px;transition:.2s;display:flex;flex-direction:column}
+.cloud-vcard:hover{transform:translateY(-3px);box-shadow:var(--shadow-hover);border-color:var(--teal-line)}
+.cloud-vthumb{height:86px;border-radius:11px;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid rgba(255,255,255,.6)}
+.cloud-vthumb>span:first-child{font-size:34px;filter:drop-shadow(0 5px 10px rgba(38,56,60,.12));transition:transform .25s}
+.cloud-vcard:hover .cloud-vthumb>span:first-child{transform:scale(1.12) rotate(-5deg)}
+.cloud-vthumb .cv-play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.86);color:var(--teal-dark);display:flex;align-items:center;justify-content:center;z-index:1}
+.cloud-vthumb .cv-play svg{width:12px;height:12px}
+.cloud-vthumb .cv-dur,.cloud-vthumb .cv-tag{position:absolute;bottom:7px;font-size:10px;padding:1px 7px;border-radius:6px;z-index:1;display:flex;align-items:center;gap:3px}
+.cloud-vthumb .cv-dur{left:8px;background:rgba(38,56,60,.55);color:#fff}
+.cloud-vthumb .cv-tag{right:8px;background:rgba(255,255,255,.85);color:var(--ink-2)}
+.cloud-vthumb .cv-tag svg{width:10px;height:10px}
+.cloud-vcard .lib-foot{margin-top:auto;padding-top:9px}
+.cloud-vempty{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:16px;border:1px dashed var(--teal-line);border-radius:13px;background:var(--surface-soft);font-size:12.5px}
+.cloud-vempty>svg{width:28px;height:28px;color:var(--teal);opacity:.7;flex:none}
+.cloud-vempty>div{flex:1;min-width:180px}
+.cloud-vplayer{display:block;width:100%;max-height:62vh;border-radius:12px;background:#1b2b2e;aspect-ratio:16/9}
+.pulse-focus{animation:pulseFocus 1.3s ease}
+@keyframes pulseFocus{0%,100%{box-shadow:0 0 0 0 rgba(63,157,143,0)}35%{box-shadow:0 0 0 5px rgba(63,157,143,.16)}}
+@media(max-width:600px){.cloud-vgrid{grid-template-columns:1fr}}

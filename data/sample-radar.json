@@ -1,0 +1,36 @@
+[
+  {
+    "video_id": "LIVE-001",
+    "caption": "狗狗拆家的 40 分钟解法（授权数据源样例）",
+    "unique_id": "@petlab.demo",
+    "track": "pet-chew",
+    "duration": 42,
+    "like_count": 128000,
+    "comment_count": 3400,
+    "share_count": 2100,
+    "tags": ["宠物磨牙", "拆家"],
+    "hook": "别再买第 8 根咬胶了，先看看它为什么咬沙发。",
+    "pain": "狗独处时焦虑，咬家具。",
+    "proof": "用耐咬玩具 + 离家前 10 分钟消耗，连续 7 天记录。",
+    "cta": "评论区发你家狗的拆家照，我给方案。",
+    "product": "耐咬磨牙玩具",
+    "url": "https://example.com/videos/LIVE-001"
+  },
+  {
+    "video_id": "LIVE-002",
+    "caption": "早 C 晚 A 极简三步（授权数据源样例）",
+    "unique_id": "@skinlab.demo",
+    "track": "skincare",
+    "duration": 35,
+    "like_count": 86000,
+    "comment_count": 1900,
+    "share_count": 980,
+    "tags": ["女性护肤"],
+    "hook": "早 C 晚 A 根本不用买一整套。",
+    "pain": "步骤太多坚持不下来。",
+    "proof": "28 天半脸对照。",
+    "cta": "收藏这张三步清单。",
+    "product": "精华组合",
+    "url": "https://example.com/videos/LIVE-002"
+  }
+]

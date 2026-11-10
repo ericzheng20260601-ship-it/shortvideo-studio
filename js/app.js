@@ -3,6 +3,8 @@ import { $, $$, toast, modal, esc, pad, fmtDateCN, bindCollapse } from './ui.js'
 import { store } from './store.js';
 import { bus } from './bus.js';
 import { loadAllowlist, verifyCode, setSession, clearSession, getSession, revalidate, logAccess, isAdmin, allowlistIsOffline } from './auth.js';
+import { cloudEnabled, staticFallback, cloudNotice, restoreCloudAuth, startCloudLogin, signOutCloud } from './cloud.js';
+import { applyRadarItems, cachedItems } from './radar-source.js';
 
 import home from './pages/home.js';
 import radar from './pages/radar.js';
@@ -103,7 +105,22 @@ function showShell(session) {
   tickClock();
 }
 
+function updateCloudChip() {
+  const chip = $('#cloudChip');
+  if (!chip) return;
+  if (staticFallback) { chip.innerHTML = '<span class="dot"></span><span>静态备份站</span>'; chip.title = cloudNotice; }
+  else if (!cloudEnabled) { chip.innerHTML = '<span class="dot"></span><span>云端未就绪</span>'; chip.title = '云服务 SDK 未加载'; }
+  else if (bus.cloudSession) { chip.innerHTML = '<span class="dot dot-green"></span><span>云端已连接</span>'; chip.title = '已登录 WorkBuddy 账号，可上传原视频'; }
+  else { chip.innerHTML = '<span class="dot dot-green"></span><span>本地已保存</span>'; chip.title = '本机工程已保存；云端上传按需登录'; }
+}
+
 async function boot() {
+  // 若配置了授权数据源，刷新后也把缓存条目注入共享数组，保证拆解/工坊/素材库口径一致
+  const cachedRadar = cachedItems();
+  if (cachedRadar) applyRadarItems(cachedRadar);
+  // OAuth 回调必须在授权门与路由之前分发
+  bus.cloudSession = await restoreCloudAuth();
+  updateCloudChip();
   const r = await loadAllowlist();
   const s = await revalidate();
   const status = $('#gateStatus');
@@ -179,10 +196,24 @@ function wireChrome() {
       actions:[{ label:'退出登录', onClick:()=>{ clearSession(); logAccess('退出登录'); location.hash='#/home'; location.reload(); } },{ label:'关闭', primary:true }] });
   };
   $('#sideMore').onclick = () => $('#btnHelp').click();
-  const cloud = $('.cloud-chip');
-  if (cloud) { cloud.style.cursor='pointer'; cloud.title='点击查看存储说明'; cloud.onclick = () => modal({
-    title:'工程存储说明', desc:'刷新不丢失，跨设备需导出快照',
-    body:'<div class="notice-box">文案、剪辑工程、素材与自检状态保存在本机浏览器（localStorage），刷新页面不会丢失。由于站点托管在静态页面服务上，浏览器无法直接写入仓库；在「管理后台 → 数据快照」导出 JSON 并提交到仓库，即可把工程随代码一起版本化。</div>' }); }
+  const chip = $('.cloud-chip');
+  if (chip) {
+    chip.style.cursor = 'pointer';
+    chip.onclick = () => {
+      const signed = !!bus.cloudSession;
+      modal({
+        title:'数据与存储说明', desc:'本地工程 + 云端原视频',
+        body:`<div class="block"><div class="block-head"><b>本机工程</b></div><div class="small muted">文案、四轨剪辑工程、拆解与自检状态保存在浏览器 localStorage，刷新不丢失；「管理后台 → 数据快照」可导出 JSON 随仓库版本化。</div></div>
+          <div class="block"><div class="block-head"><b>云端原视频</b></div><div class="small muted">「素材库 → 上传原视频」会把视频文件存入应用云存储，元数据进入云数据库。上传与播放需要登录 WorkBuddy 账号；未登录不影响其他功能。</div></div>
+          <div class="notice-box">${staticFallback ? esc(cloudNotice) : (cloudEnabled ? (signed ? '当前已登录云端账号。' : '当前未登录云端账号，上传时会提示登录。') : '云服务 SDK 未加载，请检查网络后刷新。')}</div>`,
+        actions: signed
+          ? [{ label:'退出云端账号', onClick:async()=>{ await signOutCloud(); bus.cloudSession=null; updateCloudChip(); location.reload(); } },{ label:'关闭',primary:true }]
+          : (cloudEnabled && !staticFallback
+              ? [{ label:'关闭' },{ label:'使用 WorkBuddy 登录',primary:true,onClick:async()=>{ const r=await startCloudLogin(); if(r.error) toast('登录未启动',r.error.message,'error'); } }]
+              : [{ label:'关闭',primary:true }]),
+      });
+    };
+  }
 }
 
 wireChrome();

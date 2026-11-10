@@ -3,6 +3,7 @@ import { RADAR, TRACKS, trackOf } from '../data.js';
 import { store } from '../store.js';
 import { bus } from '../bus.js';
 import { $, $$, esc, toast, modal, pageHead, fmtNum } from '../ui.js';
+import { loadRadar, applyRadarItems, getEndpoint, setEndpoint, clearEndpoint, SOURCE_CONTRACT, SOURCE_LABEL } from '../radar-source.js';
 
 const SORTS = [['heat','按热度排序'],['views','按播放量排序'],['saves','按收藏排序']];
 const INSIGHT = {
@@ -42,6 +43,11 @@ function filtered() {
 function cardHTML(r) {
   const t = TRACKS.find(x => x.id === r.track) || TRACKS[0];
   const fav = store.get('favorites', []).includes(r.id);
+  const miss = r._missing || [];
+  const views = miss.includes('views') ? '—' : fmtNum(r.views);
+  const saves = miss.includes('saves') ? '—' : fmtNum(r.saves);
+  const sales = miss.includes('views') ? '—' : fmtNum(Math.round(r.views * 0.0042));
+  const heat = r.heat ? String(r.heat) : '—';
   return `<div class="radar-card" data-id="${r.id}">
     <div class="radar-cover" style="background:${t.grad}">
       <span class="cover-emoji">${t.emoji}</span>
@@ -54,11 +60,11 @@ function cardHTML(r) {
       <div class="radar-title tooltip" data-tip="${esc(r.title)}">${esc(r.title)}</div>
       <div class="row" style="gap:5px;margin-top:7px;flex-wrap:wrap">${r.tags.map(x=>`<span class="badge gray">${esc(x)}</span>`).join('')}<span class="badge">${esc(t.name)}</span></div>
       <div class="radar-metrics">
-        <div class="metric"><b>${fmtNum(r.views)}</b><span>播放量</span></div>
-        <div class="metric"><b>${fmtNum(r.saves)}</b><span>收藏</span></div>
-        <div class="metric"><b>${fmtNum(Math.round(r.views*0.0042))}</b><span>销量估算</span></div>
+        <div class="metric"><b>${views}</b><span>播放量</span></div>
+        <div class="metric"><b>${saves}</b><span>收藏</span></div>
+        <div class="metric"><b>${sales}</b><span>销量估算</span></div>
       </div>
-      <div class="heat"><span class="small muted">热度分</span><div class="heat-bar"><i style="width:${r.heat}%"></i></div><b>${r.heat}</b></div>
+      <div class="heat"><span class="small muted">热度分</span><div class="heat-bar"><i style="width:${r.heat || 0}%"></i></div><b>${heat}</b></div>
       <div class="radar-actions">
         <button class="btn btn-sm" data-act="insight" data-id="${r.id}">看新解</button>
         <button class="btn btn-sm" data-act="break" data-id="${r.id}">拆解</button>
@@ -74,7 +80,8 @@ export default {
     if (preset && TRACKS.some(t => t.id === preset)) state.track = preset;
     return `
     ${pageHead('爆款雷达','探索 TikTok 上正在流行的带货内容，按热度找方向',
-      `<button class="btn" id="btnToLibrary">${icon('folder',14)} 抽取 5 条到素材库</button>
+      `<button class="btn" id="btnDataSource">${icon('cloud',14)} 数据源</button>
+       <button class="btn" id="btnToLibrary">${icon('folder',14)} 抽取 5 条到素材库</button>
        <button class="btn" id="btnRefresh">${icon('refresh',14)} 刷新榜单</button>
        <button class="btn btn-primary" id="btnPick">${icon('target',14)} 按赛道抽签</button>`)}
     <div class="filter-bar">
@@ -90,19 +97,47 @@ export default {
       <button class="chip ${state.favOnly?'active':''}" id="favOnly">${icon('bookmark',13)} 只看收藏</button>
       <span class="spacer"></span>
       <span class="small muted" id="radarCount"></span>
-      <span class="badge amber">演示数据 · 结构化样例</span>
+      <span class="badge amber" id="radarSource" style="cursor:pointer" title="查看数据源状态与字段契约">演示数据 · 结构化样例</span>
     </div>
     <div class="radar-grid" id="radarGrid"></div>`;
   },
 
-  mount(root) {
+  async mount(root) {
     const grid = $('#radarGrid', root);
+    let info = { mode:'demo', note:'演示数据 · 结构化样例', error:null };
     const draw = () => {
       const list = filtered();
       const label = SORTS.find(s => s[0] === state.sort)?.[1] || '按热度排序';
       $('#radarCount', root).textContent = `共 ${list.length} 条 · ${label}`;
+      const [text, cls] = SOURCE_LABEL[info.mode] || SOURCE_LABEL.demo;
+      const badge = $('#radarSource', root);
+      if (badge) { badge.textContent = text; badge.className = `badge ${cls}`; badge.title = info.note; }
       grid.innerHTML = list.length ? list.map(cardHTML).join('') : '<div class="empty" style="grid-column:1/-1">没有符合条件的条目，换个筛选试试</div>';
     };
+    const openSource = () => modal({
+      title:'爆款雷达 · 数据源', desc:'演示数据与授权数据源之间的适配层', wide:true,
+      body:`<div class="notice-box">当前状态：${esc(info.note)}${info.error ? `（${esc(info.error)}）` : ''}</div>
+        <div class="divider"></div>
+        <div class="field"><label class="field-label" for="dsEndpoint">合规数据代理地址（返回 JSON 数组）</label>
+          <input class="input" id="dsEndpoint" placeholder="https://your-api.example/radar.json" value="${esc(getEndpoint())}" />
+          <div class="field-hint">留空则使用内置演示数据。这里应填你自建的服务端接口，不要填 TikTok 页面地址；浏览器直连公共页会被跨域与反爬拦截。仓库内 data/sample-radar.json 是返回格式样例。</div></div>
+        <div class="divider"></div>
+        <div class="block"><div class="block-head"><b>字段契约</b><span class="badge">${SOURCE_CONTRACT.length} 项</span></div>
+          ${SOURCE_CONTRACT.map(([f,d,n]) => `<div class="clip-row" style="margin-bottom:5px"><span class="badge gray" style="flex:none">${esc(f)}</span><div style="flex:1;min-width:0"><b class="small">${esc(d)}</b><div class="small muted">${esc(n)}</div></div></div>`).join('')}
+        </div>
+        <div class="notice-box" style="margin-top:10px">合规边界：TikTok 服务条款禁止未经书面批准的自动化提取；Research API 不提供播放量、收藏数与视频文件。本站不内置采集器。接入前请先确定官方批准的数据源或已获授权的数据供应商，并确认字段口径（缺失的指标会显示 —）。达人原视频只保留链接与元数据，不下载转存。</div>`,
+      actions:[
+        { label:'恢复演示数据', onClick:()=>{ clearEndpoint(); location.reload(); } },
+        { label:'取消' },
+        { label:'保存并刷新', primary:true, onClick:()=>{
+          const v = ($('#dsEndpoint')?.value || '').trim();
+          if (v && !/^https?:\/\//i.test(v)) { toast('地址格式不正确', '请填写 http(s):// 开头的接口地址', 'warn'); return false; }
+          setEndpoint(v); location.reload();
+        }},
+      ],
+    });
+    $('#btnDataSource', root).onclick = openSource;
+    $('#radarSource', root).onclick = openSource;
 
     grid.onclick = e => {
       const btn = e.target.closest('[data-act]');
@@ -152,7 +187,12 @@ export default {
       bus.navigate('library', { drawClips:true, track:state.track });
       toast('去素材库抽 5 条','可切换按热度或随机抽取','');
     };
-    $('#btnRefresh', root).onclick = () => { toast('榜单已刷新','演示数据按当前筛选重新排序'); draw(); };
+    $('#btnRefresh', root).onclick = async () => {
+      const res = await loadRadar({ force:true });
+      applyRadarItems(res.items);
+      info = res; draw();
+      toast(res.mode === 'demo' ? '榜单已刷新' : '数据源已重新拉取', res.note, res.mode === 'fallback' ? 'warn' : '');
+    };
     $('#btnPick', root).onclick = () => {
       const list = filtered();
       if (!list.length) { toast('没有可抽的条目','请放宽筛选','warn'); return; }
@@ -162,6 +202,10 @@ export default {
         body:`<div class="block"><div class="block-head"><b>${esc(r.title)}</b></div><p>${esc(r.hook)}</p></div><div class="block"><div class="block-head"><b>动作建议</b></div><p>先拆解结构，再按同一骨架写一条自己赛道（${esc(t?.name||'')}）的稿子。</p></div>`,
         actions:[{ label:'去拆解', onClick:()=>bus.navigate('breakdown',{radar:idOf(r)}) },{ label:'去写文案', primary:true, onClick:()=>bus.navigate('script',{radar:idOf(r)}) }] });
     };
+    draw();
+    const res = await loadRadar();
+    applyRadarItems(res.items);
+    info = res;
     draw();
   },
 };

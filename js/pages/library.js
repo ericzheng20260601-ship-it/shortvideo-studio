@@ -3,6 +3,7 @@ import { RADAR, trackOf } from '../data.js';
 import { store } from '../store.js';
 import { bus } from '../bus.js';
 import { $, $$, esc, toast, modal, pageHead, copyText, downloadFile, confirmDlg, fmtNum } from '../ui.js';
+import { initCloudVideo } from '../cloud-video.js';
 
 const TABS = [['all','全部'],['script','文案'],['breakdown','拆解'],['project','工程'],['film','成片'],['creator','达人视频'],['fav','收藏']];
 const CLIP_N = 5;
@@ -113,6 +114,7 @@ export default {
     ${pageHead('素材库','文案、结构拆解、剪辑工程、成片与达人视频统一收纳，可复制、导出、复用',
       `<button class="btn" id="btnDrawClips">${icon('target',14)} 抽取达人视频</button>
        <button class="btn" id="btnNewAsset">${icon('plus',14)} 新建素材</button>
+       <button class="btn btn-soft" id="btnGoCloud">${icon('video',14)} 上传原视频</button>
        <button class="btn btn-primary" id="btnGoScript">${icon('file',14)} 去写文案</button>`)}
     <div class="card card-pad" style="margin-bottom:14px">
       <div class="row row-wrap">
@@ -127,6 +129,17 @@ export default {
         <span class="spacer"></span>
         <button class="btn btn-sm" id="btnDrawClipsInline">${icon('refresh',13)} 重新抽取 5 条</button>
       </div>
+    </div>
+    <div class="card card-pad" id="cloudVideoCard" style="margin-bottom:14px">
+      <div class="card-title"><h3>云端原视频</h3><span class="sub" id="cloudVideoStatus">检查云端状态…</span></div>
+      <div class="row row-wrap" style="gap:8px">
+        <button class="btn btn-primary" id="btnUploadVideo">${icon('video',14)} 上传原视频</button>
+        <button class="btn" id="btnCloudLogin">${icon('shield',14)} 使用 WorkBuddy 登录</button>
+        <span class="spacer"></span>
+        <span class="small muted" id="cloudVideoCount">0 条</span>
+      </div>
+      <div id="cloudVideoList" style="margin-top:10px"></div>
+      <div class="field-hint" id="cloudVideoHint"></div>
     </div>
     <div class="lib-grid" id="libGrid"></div>`;
   },
@@ -234,6 +247,11 @@ export default {
       }}],
     });
     draw();
+    // 云端原视频区：按需登录，静态备份站明确禁用，不伪装成已上传。
+    initCloudVideo(root).catch(e => {
+      const box = $('#cloudVideoList', root);
+      if (box) box.innerHTML = `<div class="notice-box">云端组件初始化失败：${esc(e?.message || '未知错误')}</div>`;
+    });
     if (bus.pending?.drawClips) {
       bus.pending = { ...bus.pending, drawClips:false }; // 一次性消费，避免之后每次进素材库都自动弹窗
       setTimeout(() => { if ($('#libGrid', root)) openClipPicker(draw); }, 160);
