@@ -1,0 +1,13 @@
+.git
+.github
+.workbuddy
+server/node_modules
+server/data
+data/initial-access.txt
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+.DS_Store
+.env
+*.md

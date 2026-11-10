@@ -1,0 +1,40 @@
+# 短视频工作台 · 云服务器一键启动
+# 启动：docker compose up -d --build     查看日志：docker compose logs -f
+# 访问：http://<服务器IP>:3000  （生产建议用 Nginx/Caddy 反代 + HTTPS，Sharecode 类静态链接不支持本服务）
+# 数据全部保存在 studio-data 卷：SQLite、上传素材、成片、会话密钥、审计日志
+# 首次启动会从 data/accounts.json 导入账号（仅 PBKDF2 摘要，不含明文），初始密码沿用现有凭据
+# 无 TikTok 官方权限：默认使用内置演示数据源；配置第三方合规数据 API 后才会有真实爆款指标
+# 未配置 LLM/ASR/TTS 时自动降级为本地规则引擎与占位配音，链路仍可完整跑通
+services:
+  studio:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: shortvideo-studio:2.0
+    container_name: shortvideo-studio
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      SV_HOST: 0.0.0.0
+      SV_DATA_DIR: /app/data
+      SV_TZ: Asia/Shanghai
+      # 可选：显式设置会覆盖导入的管理员初始密码（请勿写进仓库，用 .env 提供）
+      SV_ADMIN_PASSWORD: ${SV_ADMIN_PASSWORD:-}
+      # 可选：第三方合规数据源（也可在「管理后台 → 云服务器管理」里配置）
+      SV_DATA_APIURL: ${SV_DATA_APIURL:-}
+      SV_DATA_APIKEY: ${SV_DATA_APIKEY:-}
+      SV_LLM_BASEURL: ${SV_LLM_BASEURL:-}
+      SV_LLM_APIKEY: ${SV_LLM_APIKEY:-}
+      SV_PUSH_WEBHOOKURL: ${SV_PUSH_WEBHOOKURL:-}
+    volumes:
+      - studio-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  studio-data:

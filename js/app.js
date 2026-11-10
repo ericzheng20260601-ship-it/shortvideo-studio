@@ -6,6 +6,8 @@ import { loadAccounts, verifyLogin, setSession, clearSession, getSession, revali
 import { openChangePassword } from './password-dialog.js';
 import { cloudEnabled, staticFallback, cloudNotice, restoreCloudAuth, startCloudLogin, signOutCloud } from './cloud.js';
 import { applyRadarItems, cachedItems } from './radar-source.js';
+import { svBoot, svLogin, svLogout, svState } from './server-api.js';
+import { mountCloudConsole } from './cloud-console.js';
 
 import home from './pages/home.js';
 import radar from './pages/radar.js';
@@ -68,6 +70,7 @@ function renderPage() {
   const root = $('#page-root');
   root.innerHTML = `<div class="page">${n.page.render()}</div>`;
   try { n.page.mount(root); } catch (e) { console.error('[page mount]', id, e); }
+  try { mountCloudConsole(id, root); } catch (e) { console.error('[cloud console]', id, e); }
   bindCollapse(root);
   renderNav(id);
   setStage(n.stage);
@@ -118,6 +121,8 @@ function updateCloudChip() {
 }
 
 async function boot() {
+  // 探测云服务器后端：在线时以服务端为唯一身份源，离线时回退浏览器名单（静态备份站）
+  await svBoot();
   // 若配置了授权数据源，刷新后也把缓存条目注入共享数组，保证拆解/工坊/素材库口径一致
   const cachedRadar = cachedItems();
   if (cachedRadar) applyRadarItems(cachedRadar);
@@ -146,11 +151,33 @@ function showGate() {
   };
   const submit = async () => {
     err.hidden = true;
-    const res = await verifyLogin(emailEl.value, passEl.value);
+    const email = emailEl.value.trim(), pass = passEl.value;
+    const st = svState();
+    // 云服务器在线：服务端鉴权为准，后台新加的成员也能直接登录
+    if (st.available) {
+      const r = await svLogin(email, pass);
+      if (!r.ok) {
+        logAccess(`服务端登录失败：${r.reason}`);
+        err.textContent = `服务端登录失败：${r.reason}`; err.hidden = false;
+        (pass ? emailEl : passEl).focus();
+        return;
+      }
+      const u = r.user || {};
+      const s = { email:u.email || email, name:u.name || email.split('@')[0],
+        role:(u.role === 'owner' || u.role === 'admin') ? 'admin' : 'user',
+        loginAt:store.now(), usingInitial:false, serverAuth:true };
+      setSession(s);
+      logAccess(`${s.name}（${s.email}）登录工作台（服务端身份）`);
+      showShell(s);
+      toast('欢迎回来', `${s.name}，云服务器已连接`);
+      return;
+    }
+    // 静态备份站：沿用浏览器名单
+    const res = await verifyLogin(email, pass);
     if (!res.ok) {
       logAccess(`登录失败：${res.reason}`);
       err.textContent = res.reason; err.hidden = false;
-      (passEl.value ? emailEl : passEl).focus();
+      (pass ? emailEl : passEl).focus();
       return;
     }
     const s = { email:res.email, name:res.account.name, role:res.account.role,
@@ -207,10 +234,11 @@ function wireChrome() {
         <div class="block"><div class="block-head"><b>密码状态</b><span class="badge ${s?.usingInitial ? 'amber' : ''}">${s?.usingInitial ? '初始密码' : '已自定义'}</span></div>
           <div class="small muted">${s?.usingInitial ? '建议尽快修改为仅自己知道的密码。' : '修改后本机立即生效；其他设备需同步账号名单。'}</div></div>
         <div class="block"><div class="block-head"><b>登录时间</b></div><div class="small muted">${esc(s?.loginAt || '—')}</div></div>
-        <div class="block"><div class="block-head"><b>数据位置</b></div><div class="small muted">本机浏览器存储；管理后台可导出工程快照提交到仓库。</div></div>`,
+        <div class="block"><div class="block-head"><b>云服务器</b><span class="badge ${svState().available ? 'teal' : ''}">${svState().available ? '已连接' : '离线'}</span></div>
+          <div class="small muted">${svState().available ? '身份、素材、拆解报告与混剪任务由服务端统一管理；后台可配置数据源、成员与配额。' : '当前为静态备份站，工程保存在本机浏览器；管理后台可导出快照提交到仓库。'}</div></div>`,
       actions:[
         { label:'修改密码', close:false, onClick:(close)=>{ close(); openChangePassword(); } },
-        { label:'退出登录', onClick:()=>{ clearSession(); logAccess('退出登录'); location.hash='#/home'; location.reload(); } },
+        { label:'退出登录', onClick:async()=>{ await svLogout(); clearSession(); logAccess('退出登录'); location.hash='#/home'; location.reload(); } },
         { label:'关闭', primary:true },
       ] });
   };

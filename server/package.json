@@ -1,0 +1,14 @@
+{
+  "name": "shortvideo-studio-server",
+  "version": "2.0.0",
+  "private": true,
+  "description": "短视频工作台云服务器后端：每日发现、拆解分析、批量混剪、多人协作",
+  "main": "index.js",
+  "scripts": {
+    "start": "node --no-warnings index.js",
+    "dev": "node --no-warnings --watch index.js",
+    "smoke": "node --no-warnings scripts/smoke.js"
+  },
+  "engines": { "node": ">=22.5.0" },
+  "devDependencies": { "ffmpeg-static": "^5.3.0" }
+}
