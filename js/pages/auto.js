@@ -50,6 +50,7 @@ export default {
     return `
     ${pageHead('智能成片','上传本地视频，自动识别画面、写解说、排字幕、配乐，导出可用工程包',
       `<span class="badge blue">${icon('lock',12)} 本地处理 · 半自动工程包</span>
+       <button class="btn" id="btnToLibrary">${icon('cloud',14)} 成片入库</button>
        <button class="btn btn-primary" id="btnStart">${icon('zap',14)} 开始生成</button>`)}
     <div class="split" style="grid-template-columns:1.35fr .65fr;align-items:start">
       <div>
@@ -184,6 +185,7 @@ export default {
         <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
           <button class="btn btn-sm" data-job-review="${j.id}">送去评估</button>
           <button class="btn btn-sm" data-job-editor="${j.id}">送到剪辑台</button>
+          <button class="btn btn-sm" data-job-library="${j.id}">${icon('cloud',12)} 成片入库</button>
           <button class="btn btn-sm btn-ghost" data-job-download="${j.id}">${icon('download',12)} 工程包</button>
         </div></div>`).join('') : '<div class="empty">还没有生成结果</div>')
         + (jobs.length > 8 ? `<div class="row" style="justify-content:center;margin-top:10px"><button class="btn btn-sm" id="btnToggleJobs">${showAllJobs ? '收起结果' : `展开全部 ${jobs.length} 条`} ${icon(showAllJobs ? 'chevronUp' : 'chevronDown',12)}</button></div>` : '');
@@ -198,6 +200,10 @@ export default {
           subtitle:[{id:store.uid('t'),label:'钩子字幕',start:0,len:h,text:j?.script?.hook},{id:store.uid('t'),label:'要点字幕',start:h,len:body,text:j?.script?.body},{id:store.uid('t'),label:'CTA 字幕',start:h+body,len:c,text:j?.script?.cta}],
           music:[{id:store.uid('m'),label:'贯穿 BGM',start:0,len:d}], fx:[] };
         store.add('projects', np); toast('已送到剪辑台','四轨工程已生成'); bus.navigate('editor',{project:np.id});
+      });
+      $$('[data-job-library]', root).forEach(b=>b.onclick=()=>{
+        const j = store.get('autoJobs',[]).find(x=>x.id===b.dataset.jobLibrary);
+        bus.navigate('library',{uploadGenerated:true, title:j?.title || ''});
       });
       $$('[data-job-download]', root).forEach(b=>b.onclick=()=>{
         const j = store.get('autoJobs',[]).find(x=>x.id===b.dataset.jobDownload);
@@ -294,6 +300,7 @@ export default {
     };
     $('#btnStart', root).onclick = start;
     $('#btnStart2', root).onclick = start;
+    $('#btnToLibrary', root).onclick = () => bus.navigate('library',{uploadGenerated:true});
     paintSuggest(); jobsHTML(); clampN();
   },
 };

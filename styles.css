@@ -426,6 +426,23 @@ a{color:inherit;text-decoration:none}
 .cloud-vempty>svg{width:28px;height:28px;color:var(--teal);opacity:.7;flex:none}
 .cloud-vempty>div{flex:1;min-width:180px}
 .cloud-vplayer{display:block;width:100%;max-height:62vh;border-radius:12px;background:#1b2b2e;aspect-ratio:16/9}
+/* 云端素材库：视频 / 音频 / 图片 + 原素材 / 生产成片文件夹 */
+.media-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:11px;border-top:1px dashed var(--line)}
+.media-toolbar-label{font-size:11.5px;color:var(--ink-3);margin-right:2px}
+.media-toolbar-sep{width:1px;height:18px;background:var(--line);margin:0 6px}
+.media-toolbar .chip{height:27px;padding:0 10px}
+.media-group{margin-top:14px}
+.media-group:first-child{margin-top:0}
+.media-folder-head{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--teal-line);border-radius:11px;background:var(--surface-soft);margin-bottom:10px}
+.media-folder-ico{width:28px;height:28px;border-radius:8px;background:var(--teal-soft);color:var(--teal-dark);display:flex;align-items:center;justify-content:center;flex:none}
+.media-folder-head b{font-size:12.5px;display:flex;align-items:center;gap:8px}
+.media-folder-count{font-size:11px;font-weight:500;color:var(--ink-3);background:#fff;border:1px solid var(--line);border-radius:7px;padding:1px 7px}
+.media-folder-path{font-size:11px;color:var(--ink-3);margin-top:3px;word-break:break-all}
+.cloud-vthumb>span:first-child svg{width:34px;height:34px;color:rgba(38,56,60,.66)}
+.cloud-vplayer.cloud-vimage{object-fit:contain;background:#f3f7f6}
+.cloud-vaudio{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:30px 16px;border-radius:12px;background:var(--surface-soft);color:var(--teal-dark)}
+.cloud-vaudio audio{width:100%;max-width:520px}
+@media(max-width:600px){.media-toolbar-sep{display:none}}
 .pulse-focus{animation:pulseFocus 1.3s ease}
 @keyframes pulseFocus{0%,100%{box-shadow:0 0 0 0 rgba(63,157,143,0)}35%{box-shadow:0 0 0 5px rgba(63,157,143,.16)}}
 @media(max-width:600px){.cloud-vgrid{grid-template-columns:1fr}}

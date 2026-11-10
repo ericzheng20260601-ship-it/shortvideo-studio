@@ -5,7 +5,7 @@ import { publicConfig } from './cloud-config.js';
 const host = location.hostname;
 export const staticFallback = host.endsWith('github.io') || host === '127.0.0.1' || host === 'localhost';
 export const cloudNotice = staticFallback
-  ? '当前是静态备份站，云端原视频上传需在 WorkBuddy 发布链接中使用。'
+  ? '当前是静态备份站，云端素材（视频 / 音频 / 图片）上传需在 WorkBuddy 发布链接中使用。'
   : '';
 
 let cloud = null;

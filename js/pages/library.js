@@ -3,8 +3,9 @@ import { RADAR, trackOf } from '../data.js';
 import { store } from '../store.js';
 import { bus } from '../bus.js';
 import { $, $$, esc, toast, modal, pageHead, copyText, downloadFile, confirmDlg, fmtNum } from '../ui.js';
-import { initCloudVideo } from '../cloud-video.js';
+import { initCloudMedia } from '../cloud-media.js';
 
+// 素材库以云端视频 / 音频 / 图片为主；下面是本机保存的文本与工程类辅助素材。
 const TABS = [['all','全部'],['script','文案'],['breakdown','拆解'],['project','工程'],['film','成片'],['creator','达人视频'],['fav','收藏']];
 const CLIP_N = 5;
 
@@ -56,7 +57,7 @@ function openClipPicker(onDone) {
       </div>
       <div class="field-hint" id="clipModeInfo"></div>
       <div id="clipPreview"></div>
-      <div class="notice-box" style="margin-top:10px">入库会替换当前达人视频素材（其他文案 / 工程 / 成片不受影响）。这里保存的是结构化参考卡：作者、赛道、时长、播放收藏、钩子与 CTA，不存放也不外链原始视频文件。</div>`,
+      <div class="notice-box" style="margin-top:10px">这里入库的是结构化参考卡：作者、赛道、时长、播放收藏、钩子与 CTA，不存放也不外链达人原视频文件。真实视频文件请用上方「上传云端素材」存入原素材文件夹。</div>`,
     actions:[{ label:'取消' }, { label:`抽取 ${CLIP_N} 条入库`, primary:true, onClick:() => {
       store.set('creatorClips', ids());
       toast('已抽取 5 条达人视频','素材库 · 达人视频分类可直接查看');
@@ -105,18 +106,45 @@ function collect() {
   const fav = store.get('favorites', []);
   RADAR.filter(r => fav.includes(r.id)).forEach(r => out.push({
     id:r.id, type:'fav', title:r.title, text:r.hook, meta:`${trackOf(r.track).name} · 热度 ${r.heat}`, at:'爆款雷达', raw:r }));
-  return [...clips, ...out]; // 达人视频置顶，进入素材库即可看到本次抽取的 5 条
+  return [...clips, ...out]; // 达人视频置顶
 }
 
 export default {
   render() {
     return `
-    ${pageHead('素材库','文案、结构拆解、剪辑工程、成片与达人视频统一收纳，可复制、导出、复用',
-      `<button class="btn" id="btnDrawClips">${icon('target',14)} 抽取达人视频</button>
+    ${pageHead('素材库','云端视频 / 音频 / 图片按「原素材」与「生产成片」分文件夹存放，文案与工程作为辅助素材',
+      `<button class="btn btn-primary" id="btnGoCloud">${icon('upload',14)} 上传云端素材</button>
+       <button class="btn" id="btnDrawClips">${icon('target',14)} 抽取达人视频</button>
        <button class="btn" id="btnNewAsset">${icon('plus',14)} 新建素材</button>
-       <button class="btn btn-soft" id="btnGoCloud">${icon('video',14)} 上传原视频</button>
-       <button class="btn btn-primary" id="btnGoScript">${icon('file',14)} 去写文案</button>`)}
-    <div class="card card-pad" style="margin-bottom:14px">
+       <button class="btn btn-soft" id="btnGoScript">${icon('file',14)} 去写文案</button>`)}
+
+    <div class="card card-pad" id="cloudMediaCard" style="margin-bottom:14px">
+      <div class="card-title"><h3>云端素材库</h3><span class="sub" id="mediaStatus">检查云端状态…</span></div>
+      <div class="row row-wrap" style="gap:8px">
+        <button class="btn btn-primary" id="btnUploadMedia">${icon('upload',14)} 上传原素材</button>
+        <button class="btn" id="btnUploadGenerated">${icon('wand',14)} 成片入库</button>
+        <button class="btn" id="btnCloudLogin">${icon('shield',14)} 使用 WorkBuddy 登录</button>
+        <span class="spacer"></span>
+        <span class="small muted" id="mediaCount">—</span>
+      </div>
+      <div class="media-toolbar">
+        <span class="media-toolbar-label">来源文件夹</span>
+        <button class="chip active" data-mcat="all" type="button">全部</button>
+        <button class="chip" data-mcat="original" type="button">${icon('upload',12)} 原素材</button>
+        <button class="chip" data-mcat="generated" type="button">${icon('wand',12)} 生产成片</button>
+        <span class="media-toolbar-sep"></span>
+        <span class="media-toolbar-label">文件类型</span>
+        <button class="chip active" data-mkind="all" type="button">全部</button>
+        <button class="chip" data-mkind="video" type="button">${icon('video',12)} 视频</button>
+        <button class="chip" data-mkind="audio" type="button">${icon('music',12)} 音频</button>
+        <button class="chip" data-mkind="image" type="button">${icon('image',12)} 图片</button>
+      </div>
+      <div id="mediaList" style="margin-top:12px"></div>
+      <div class="field-hint" id="mediaHint"></div>
+    </div>
+
+    <div class="card card-pad" id="localAssetCard">
+      <div class="card-title"><h3>文本与工程素材</h3><span class="sub">本机保存 · 刷新不丢失 · 达人视频为结构化参考卡</span></div>
       <div class="row row-wrap">
         <div style="position:relative;flex:1;min-width:210px"><input class="input" id="libSearch" placeholder="搜索标题或内容…" style="padding-left:34px" />
           <span style="position:absolute;left:11px;top:9px;color:var(--ink-3)">${icon('search',15)}</span></div>
@@ -125,23 +153,12 @@ export default {
       </div>
       <div class="row row-wrap" style="gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--line)">
         <span class="badge" id="clipBadge">达人视频 ${store.get('creatorClips',[]).length} 条</span>
-        <span class="small muted">从爆款雷达抽取的达人发布视频，可预览结构 / 拆解 / 写文案，刷新不丢失</span>
+        <span class="small muted">从爆款雷达抽取的达人发布视频，可预览结构 / 拆解 / 写文案</span>
         <span class="spacer"></span>
         <button class="btn btn-sm" id="btnDrawClipsInline">${icon('refresh',13)} 重新抽取 5 条</button>
       </div>
-    </div>
-    <div class="card card-pad" id="cloudVideoCard" style="margin-bottom:14px">
-      <div class="card-title"><h3>云端原视频</h3><span class="sub" id="cloudVideoStatus">检查云端状态…</span></div>
-      <div class="row row-wrap" style="gap:8px">
-        <button class="btn btn-primary" id="btnUploadVideo">${icon('video',14)} 上传原视频</button>
-        <button class="btn" id="btnCloudLogin">${icon('shield',14)} 使用 WorkBuddy 登录</button>
-        <span class="spacer"></span>
-        <span class="small muted" id="cloudVideoCount">0 条</span>
-      </div>
-      <div id="cloudVideoList" style="margin-top:10px"></div>
-      <div class="field-hint" id="cloudVideoHint"></div>
-    </div>
-    <div class="lib-grid" id="libGrid"></div>`;
+      <div class="lib-grid" id="libGrid" style="margin-top:12px"></div>
+    </div>`;
   },
 
   mount(root) {
@@ -247,9 +264,9 @@ export default {
       }}],
     });
     draw();
-    // 云端原视频区：按需登录，静态备份站明确禁用，不伪装成已上传。
-    initCloudVideo(root).catch(e => {
-      const box = $('#cloudVideoList', root);
+    // 云端素材区：按需登录，静态备份站明确禁用，不伪装成已上传。
+    initCloudMedia(root).catch(e => {
+      const box = $('#mediaList', root);
       if (box) box.innerHTML = `<div class="notice-box">云端组件初始化失败：${esc(e?.message || '未知错误')}</div>`;
     });
     if (bus.pending?.drawClips) {
