@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>短视频工作台 · 团队入口</title>
+<style>
+  :root{
+    --bg:#f4f8f8; --surface:#fff; --ink:#22383b; --muted:#6b8589;
+    --teal:#4f9e9a; --teal-dark:#3c827e; --line:#d8e8e6; --amber:#b7862f;
+    --r:16px; --shadow:0 8px 28px rgba(45,96,94,.09);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:920px;margin:0 auto;padding:36px 20px 64px}
+  .hero{background:linear-gradient(135deg,#e8f4f1,#f7fbfb);border:1px solid var(--line);
+    border-radius:22px;padding:32px 30px;box-shadow:var(--shadow)}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .logo{width:38px;height:38px;border-radius:12px;background:var(--teal);
+    display:grid;place-items:center;color:#fff;font-weight:700;font-size:18px}
+  h1{margin:0;font-size:26px;letter-spacing:.5px}
+  h2{font-size:16px;margin:0 0 12px}
+  p{margin:8px 0}
+  .sub{color:var(--muted);font-size:13px}
+  .cta{display:inline-flex;align-items:center;gap:9px;margin-top:20px;padding:13px 26px;
+    background:var(--teal);color:#fff;border:0;border-radius:12px;font-size:15px;
+    font-weight:600;cursor:pointer;text-decoration:none;transition:.15s}
+  .cta:hover{background:var(--teal-dark)}
+  .cta[aria-disabled="true"]{background:#9fb8b6;cursor:not-allowed}
+  .hint{margin-top:10px;font-size:12px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin:22px 0}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+    padding:18px 20px;box-shadow:var(--shadow)}
+  .card .k{color:var(--teal-dark);font-weight:700;font-size:13px;letter-spacing:.3px}
+  .card h3{margin:6px 0 6px;font-size:16px}
+  .card p{margin:0;color:var(--muted);font-size:12.5px}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+    padding:20px 22px;box-shadow:var(--shadow);margin-bottom:18px}
+  .badge{display:inline-block;padding:2px 9px;border-radius:999px;background:#eef6f5;
+    color:var(--teal-dark);font-size:11px;font-weight:600;margin-left:8px;vertical-align:2px}
+  .badge.amber{background:#fbf3e2;color:var(--amber)}
+  ol{margin:8px 0 0;padding-left:20px;color:var(--muted);font-size:13px}
+  ol li{margin:5px 0}
+  .snap{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:10px}
+  .snap th,.snap td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  .snap th{color:var(--muted);font-weight:600;background:#fafdfc}
+  .empty{color:var(--muted);font-size:12.5px;padding:14px 2px}
+  .note{background:#fffaf0;border:1px solid #f0e2c4;border-radius:12px;
+    padding:14px 18px;font-size:12.5px;color:#7a6335;margin-top:18px}
+  footer{margin-top:26px;color:var(--muted);font-size:11.5px;line-height:1.9}
+  @media(max-width:640px){.grid{grid-template-columns:1fr}.wrap{padding:20px 14px 44px}.hero{padding:24px 20px}h1{font-size:22px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hero">
+    <div class="brand"><div class="logo">SV</div><h1>短视频工作台</h1></div>
+    <p class="sub">每日爆款发现 · 拆解分析 · 提示词批量混剪 · 多人协作</p>
+    <p>这里是团队统一入口，免登录即可查看。实际生产（上传素材、生成成片、批注与审批）需要管理员开通的账号，在下方进入工作台后登录。</p>
+    <a id="enterBtn" class="cta" href="#" aria-disabled="true">进入工作台 →</a>
+    <div class="hint" id="enterHint">入口尚未配置，请联系管理员。</div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="k">01 / DISCOVER</div><h3>每日发现</h3><p>定时同步与指标快照、新上榜 / 飙升 / 连续在榜、品类与国家筛选、竞对与关键词订阅、日报推送、热点一键预填选题。</p></div>
+    <div class="card"><div class="k">02 / BREAKDOWN</div><h3>拆解分析</h3><p>ASR 逐字稿时间轴、分镜切点、黄金 3 秒钩子、viral score、画面 / 运镜 / 构图、反推提示词、评论 VOC、判官团挑刺重写。</p></div>
+    <div class="card"><div class="k">03 / REMIX</div><h3>批量混剪</h3><p>素材四维分级、提示词转分镜、变体矩阵、队列进度 / 取消 / 续跑、TTS 与 SRT、成片 QC、多画幅导出、AIGC 标识与违禁词检查。</p></div>
+    <div class="card"><div class="k">04 / COLLAB</div><h3>多人协作</h3><p>服务端鉴权、组织与项目空间、角色权限、共享素材、帧级批注、版本、审批、审计日志、并发配额。</p></div>
+  </div>
+
+  <div class="panel">
+    <h2>如何获得权限<span class="badge">邀请制</span></h2>
+    <ol>
+      <li>管理员在「管理后台 → 云服务器管理 → 成员」添加你的邮箱与角色。</li>
+      <li>管理员私发给你：访问入口 + 一次性初始密码（密码不会出现在任何公开页面）。</li>
+      <li>打开工作台，用邮箱 + 初始密码登录，首次登录会提示修改为仅自己知道的密码。</li>
+      <li>忘记密码请找管理员「重置密码」；离职或转岗由管理员停用账号并撤销会话。</li>
+    </ol>
+  </div>
+
+  <div class="panel">
+    <h2>当日速览<span class="badge amber" id="snapTag">未接入快照</span></h2>
+    <div id="snapBox"></div>
+    <p class="sub" id="snapNote">该区域为发布时内嵌的只读快照，不代表工作台内的实时队列状态。</p>
+  </div>
+
+  <div class="note">
+    <b>口径说明（重要）</b><br>
+    本公开页是「发布时点的静态快照」，由管理员定时重建并重新发布后才会更新；工作台内为服务端实时数据。两者不一致时，一律以工作台内读数与任务状态为准。<br>
+    公开链接对未登录访客只提供阅读能力，上传、生成、修改等写操作需登录服务端账号后在工作台内完成。
+  </div>
+
+  <footer>
+    短视频工作台 · 团队入口页。请勿在本页放置账号、密钥、素材原文件或任何内部经营数据。<br>
+    真实爆款指标需接入第三方合规数据 API；未接入时工作台会明确标注数据来源为演示 / 本地规则，不会伪装成真实数据。
+  </footer>
+</div>
+
+<script>
+/* ============================================================
+ * 发布前只需改这两处常量，其余不要动。
+ * 1) STUDIO_URL：Node 生产后端的完整入口（含网关分享码，如有）。
+ *    以后换成自有域名，只改这里，成员收藏的本页短链不变。
+ * 2) SNAPSHOT：由定时脚本生成的只读快照。没有真实数据就保持空数组，
+ *    页面会显示「未接入」，绝不填充示例数字冒充真实读数。
+ * ============================================================ */
+var STUDIO_URL = 'REPLACE_WITH_STUDIO_URL';
+var SNAPSHOT = {
+  updatedAt: '',
+  source: '',
+  items: []
+};
+
+(function () {
+  var btn = document.getElementById('enterBtn');
+  var hint = document.getElementById('enterHint');
+  var configured = STUDIO_URL && STUDIO_URL.indexOf('REPLACE_WITH') !== 0 && /^https?:\/\//.test(STUDIO_URL);
+
+  if (configured) {
+    btn.href = STUDIO_URL;
+    btn.setAttribute('aria-disabled', 'false');
+    hint.textContent = '将跳转到生产工作台，需要账号登录。';
+  } else {
+    btn.addEventListener('click', function (e) { e.preventDefault(); });
+    hint.textContent = '入口尚未配置：管理员需在页面源码中填写 STUDIO_URL 后重新发布。';
+  }
+
+  var items = (SNAPSHOT && Array.isArray(SNAPSHOT.items)) ? SNAPSHOT.items : [];
+  var tag = document.getElementById('snapTag');
+  var box = document.getElementById('snapBox');
+  var note = document.getElementById('snapNote');
+
+  if (!items.length) {
+    tag.textContent = '未接入快照';
+    box.innerHTML = '<div class="empty">暂无已发布的只读快照。登录工作台可查看实时榜单、拆解报告与成片任务状态。</div>';
+    note.textContent = '该区域为发布时内嵌的只读快照；未接入时不显示任何数字。';
+    return;
+  }
+
+  var src = SNAPSHOT.source || '未标注';
+  var demo = /demo|local|unknown|mock/i.test(src);
+  tag.textContent = demo ? '快照 · 演示数据' : '快照 · ' + (SNAPSHOT.updatedAt || '未标注时点');
+  tag.className = demo ? 'badge amber' : 'badge';
+  var rows = items.slice(0, 8).map(function (it) {
+    return '<tr><td>' + esc(it.title) + '</td><td>' + esc(it.category) + '</td><td>' + esc(it.metric) + '</td></tr>';
+  }).join('');
+  box.innerHTML = '<table class="snap"><thead><tr><th>热点 / 选题</th><th>品类 · 国家</th><th>指标</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  note.textContent = '快照时点：' + (SNAPSHOT.updatedAt || '未标注') +
+    ' · 来源：' + src +
+    (demo ? '（演示 / 本地数据，非真实平台指标）' : '') +
+    '。公开页为发布快照，工作台内为服务端实时数据，不一致时以工作台为准。';
+
+  function esc(v) {
+    return String(v == null ? '—' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+})();
+</script>
+</body>
+</html>
