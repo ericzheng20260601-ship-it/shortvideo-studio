@@ -5,7 +5,8 @@
   "description": "短视频工作台：每日爆款发现、拆解分析、提示词批量混剪、多人协作",
   "scripts": {
     "start": "node --no-warnings server/index.js",
-    "smoke": "node --no-warnings server/scripts/smoke.js"
+    "smoke": "node --no-warnings server/scripts/smoke.js",
+    "backup": "node --no-warnings server/scripts/backup.js"
   },
   "engines": { "node": ">=22.5.0" },
   "dependencies": {

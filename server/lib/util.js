@@ -8,6 +8,9 @@ const PUBLIC_DIR = ROOT;
 const DATA_DIR = process.env.SV_DATA_DIR || path.join(__dirname, '..', 'data');
 const OUTPUT_DIR = path.join(DATA_DIR, 'outputs');
 const TMP_DIR = path.join(DATA_DIR, 'tmp');
+// 单个上传文件的上限（默认 200MB）。反向代理需同步放宽 client_max_body_size / 请求体限制。
+const MAX_UPLOAD_MB = Math.min(2048, Math.max(16, Number.parseInt(process.env.SV_MAX_UPLOAD_MB, 10) || 200));
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
 function ensureDirs() {
   for (const d of [DATA_DIR, OUTPUT_DIR, TMP_DIR]) fs.mkdirSync(d, { recursive: true });
@@ -50,10 +53,14 @@ function randomPassword() {
 let secretCache;
 function secret() {
   if (secretCache) return secretCache;
+  // 显式 SV_SECRET 优先：容器重建 / 数据卷迁移后仍用同一签名密钥，已签发会话不会集体失效。
+  // 首次部署就固定它，之后不要改；改动会强制所有已登录用户重新登录。
+  const configured = String(process.env.SV_SECRET || '').trim();
+  if (configured) { secretCache = configured; return secretCache; }
   const f = path.join(DATA_DIR, 'secret.key');
   if (fs.existsSync(f)) secretCache = fs.readFileSync(f, 'utf8').trim();
   else {
-    secretCache = process.env.SV_SECRET || crypto.randomBytes(32).toString('hex');
+    secretCache = crypto.randomBytes(32).toString('hex');
     fs.writeFileSync(f, secretCache, { mode: 0o600 });
   }
   return secretCache;
@@ -114,7 +121,7 @@ function deterministic(seed) {
 function escapeHTML(s) { return str(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 module.exports = {
-  ROOT, PUBLIC_DIR, DATA_DIR, OUTPUT_DIR, TMP_DIR,
+  ROOT, PUBLIC_DIR, DATA_DIR, OUTPUT_DIR, TMP_DIR, MAX_UPLOAD_MB, MAX_UPLOAD_BYTES,
   uid, now, day, clamp, int, str, lower, bool, jsonParse, toJson, uniq, pick,
   hashPassword, verifyPassword, randomPassword, signToken, readToken, secret,
   readBody, send, ok, fail, fetchJSON, deterministic, escapeHTML, ensureDirs

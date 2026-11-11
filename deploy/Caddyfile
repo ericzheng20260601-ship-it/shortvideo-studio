@@ -1,0 +1,27 @@
+# Caddy 反代：自动申请 / 续期 Let's Encrypt 证书，公网只暴露 80 / 443。
+# 前置条件：域名 A 记录指向本机、80 与 443 可从公网访问（中国大陆云主机需完成备案）。
+# 用法见 DEPLOY.md 第 2 节；SV_DOMAIN 由 .env 提供，例如 studio.example.com。
+{$SV_DOMAIN} {
+	encode zstd gzip
+
+	# 大视频上传：与后端 SV_MAX_UPLOAD_MB 保持一致（默认 200MB），留一些余量
+	request_body {
+		max_size 250MB
+	}
+
+	reverse_proxy studio:3000 {
+		transport http {
+			dial_timeout 10s
+			read_timeout 10m
+			write_timeout 10m
+		}
+		# 成片预览是 Range / 长连接，不要按块缓冲，否则拖动进度会卡
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+}

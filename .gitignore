@@ -13,3 +13,4 @@ server/data/initial-admin.txt
 *.sqlite-shm
 .env
 docker-compose.override.yml
+backups/

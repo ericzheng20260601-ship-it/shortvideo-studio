@@ -214,19 +214,25 @@ function execFileSyncQuick(bin, args) {
   const { execFileSync } = require('node:child_process');
   return execFileSync(bin, args, { stdio: 'ignore', timeout: 5000 });
 }
+const ffChildren = new Set();
 function runFF(args, { timeout = 300000, maxBuffer = 12 * 1024 * 1024 } = {}) {
   const bin = ffmpegBin();
   if (!bin) return Promise.reject(new Error('未找到 ffmpeg：请在云服务器安装 ffmpeg，或配置 remix.ffmpegPath'));
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout, maxBuffer, windowsHide: true }, (err, stdout, stderr) => {
+    const child = execFile(bin, args, { timeout, maxBuffer, windowsHide: true }, (err, stdout, stderr) => {
+      ffChildren.delete(child);
       if (err) reject(new Error(`ffmpeg 失败: ${String(stderr || err.message).slice(-600)}`));
       else resolve({ stdout: String(stdout), stderr: String(stderr) });
     });
+    ffChildren.add(child);
+    child.on('exit', () => ffChildren.delete(child));
   });
 }
+// 进程退出时收掉在途 ffmpeg，避免容器重启后遗留孤儿进程继续占用 CPU / 写半成品文件
+function stopFF() { for (const c of ffChildren) { try { c.kill('SIGKILL'); } catch { /* ignore */ } } ffChildren.clear(); }
 
 module.exports = {
   C, CJSON, providerStatus, chatLLM, fetchRadarItems, demoItems, normalizeExternalItem,
-  transcribe, parseSRT, synthTTS, sendPush, ffmpegBin, runFF,
+  transcribe, parseSRT, synthTTS, sendPush, ffmpegBin, runFF, stopFF,
   HOOKS, PAINS, PROOFS, CTAS, PRODUCTS, CATEGORIES, COUNTRIES
 };

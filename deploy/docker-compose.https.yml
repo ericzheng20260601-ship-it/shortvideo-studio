@@ -1,0 +1,36 @@
+# HTTPS 生产覆盖文件（叠加在根 docker-compose.yml 之上）
+#
+# 启动：
+#   cp .env.example .env && 编辑 .env：SV_DOMAIN / SV_SECRET / SV_BIND_ADDR=127.0.0.1
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.https.yml up -d --build
+# 更新代码：
+#   git pull && docker compose -f docker-compose.yml -f deploy/docker-compose.https.yml up -d --build
+#
+# 说明：studio 的 3000 端口是否暴露给公网由根 compose 里的 SV_BIND_ADDR 决定。
+# 设成 127.0.0.1 后，公网只能通过 Caddy 的 443 访问，Cookie 也会带 Secure 标记。
+services:
+  studio:
+    environment:
+      SV_COOKIE_SECURE: "1"
+      SV_MAX_UPLOAD_MB: ${SV_MAX_UPLOAD_MB:-200}
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: sv-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SV_DOMAIN: ${SV_DOMAIN:?请在 .env 里设置 SV_DOMAIN，例如 studio.example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      studio:
+        condition: service_healthy
+
+volumes:
+  caddy-data:
+  caddy-config:

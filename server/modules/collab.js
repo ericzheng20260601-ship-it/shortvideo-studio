@@ -46,10 +46,14 @@ function addMember(ctx, body) {
   const role = ROLES.includes(body.role) ? body.role : 'viewer';
   let user = DB.get('SELECT * FROM users WHERE email=?', U.lower(body.email));
   if (!user) {
-    const created = A.createUser({ email: body.email, name: body.name, password: body.password || U.randomPassword(), role, orgId, projectId: body.projectId, mustChange: 1 });
+    // 未显式给密码时生成随机初始密码，并且只在创建响应里返回一次：
+    // 数据库只存 PBKDF2 摘要，管理员必须当场复制邀请信息发给成员。
+    const pwd = String(body.password || '').trim() || U.randomPassword();
+    A.need(String(pwd).length >= 8, 400, '初始密码至少 8 位');
+    const created = A.createUser({ email: body.email, name: body.name, password: pwd, role, orgId, projectId: body.projectId, mustChange: 1 });
     user = { id: created.id };
     A.audit(ctx, 'collab.user.create', created.id, body.email);
-    return { userId: created.id, email: U.lower(body.email), created: true, initialPassword: body.password || null };
+    return { userId: created.id, email: U.lower(body.email), name: U.str(body.name, 60) || '', role, created: true, initialPassword: pwd, mustChange: true };
   }
   DB.insert('members', { org_id: orgId, project_id: body.projectId || null, user_id: user.id, role, created_at: U.now() });
   A.audit(ctx, 'collab.member.add', user.id, `${orgId}/${role}`);
@@ -83,7 +87,7 @@ function resetPassword(ctx, id, password) {
   DB.update('users', id, { ...h, must_change: 1 });
   DB.run('DELETE FROM sessions WHERE user_id=?', id);
   A.audit(ctx, 'collab.user.reset', id, '');
-  return { id };
+  return { id, initialPassword: password, mustChange: true };
 }
 
 function comments(assetId, limit = 100) {

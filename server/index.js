@@ -20,12 +20,27 @@ function route(method, pattern, fn, opts = {}) {
 }
 const q = (url) => Object.fromEntries(url.searchParams);
 
-function readRaw(req, limit = 60 * 1024 * 1024) {
+/* 上传走流式落盘：多人同时上传大视频时不会把整个文件堆在内存里。
+   超限、断连会立刻销毁临时 .part 文件，不留下半截素材。 */
+function streamTo(req, dest, limit = U.MAX_UPLOAD_BYTES) {
   return new Promise((resolve, reject) => {
-    let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > limit) { reject(new A.HttpError(413, '文件超过 60MB 限制')); req.destroy(); } else chunks.push(c); });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    let size = 0, settled = false;
+    const ws = fs.createWriteStream(dest, { mode: 0o600 });
+    const abort = (err) => {
+      if (settled) return;
+      settled = true;
+      try { req.unpipe(ws); ws.destroy(); fs.rmSync(dest, { force: true }); } catch { /* ignore */ }
+      reject(err);
+    };
+    req.on('data', c => {
+      size += c.length;
+      if (size > limit) { abort(new A.HttpError(413, `文件超过 ${U.MAX_UPLOAD_MB}MB 限制`)); req.destroy(); }
+    });
+    req.on('aborted', () => abort(new A.HttpError(400, '上传中断')));
+    req.on('error', abort);
+    ws.on('error', abort);
+    ws.on('finish', () => { if (!settled) { settled = true; resolve({ size }); } });
+    req.pipe(ws);
   });
 }
 
@@ -34,7 +49,11 @@ route('GET', '/api/health', () => ({ status: 'ok', version: '2.0.0', time: U.now
 route('GET', '/api/status', () => ({ providers: P.providerStatus(), cron: CRON.status(), version: '2.0.0' }), { public: true });
 route('POST', '/api/auth/login', async (ctx) => {
   const { token, user } = A.login(ctx.body.email, ctx.body.password, ctx.req);
-  ctx.res.setHeader('Set-Cookie', `sv_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+  // 反代场景下按 X-Forwarded-Proto 补 Secure，避免 HTTPS 站点仍下发非安全 Cookie
+  const proto = String(ctx.req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const secure = proto === 'https' || U.bool(process.env.SV_COOKIE_SECURE);
+  ctx.res.setHeader('Set-Cookie',
+    `sv_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure ? '; Secure' : ''}`);
   return { token, user };
 }, { public: true });
 route('POST', '/api/auth/logout', (ctx) => { A.logout(ctx.req); ctx.res.setHeader('Set-Cookie', 'sv_token=; Path=/; HttpOnly; Max-Age=0'); return {}; });
@@ -104,8 +123,6 @@ route('POST', '/api/remix/assets', (ctx) => { A.requireLevel(ctx, 'editor'); ret
 route('POST', '/api/remix/assets/:id/grade', (ctx) => { A.requireLevel(ctx, 'editor'); return R.gradeAsset(ctx, ctx.params.id, ctx.body.grade); });
 route('POST', '/api/remix/upload', async (ctx) => {
   A.requireLevel(ctx, 'editor');
-  const raw = await readRaw(ctx.req);
-  A.need(raw.length > 0, 400, '文件为空');
   const name = decodeURIComponent(U.str(ctx.req.headers['x-file-name'], 200)) || `upload_${Date.now()}`;
   const ext = path.extname(name).toLowerCase();
   const kind = ['.mp4', '.mov', '.webm', '.m4v'].includes(ext) ? 'video'
@@ -113,19 +130,24 @@ route('POST', '/api/remix/upload', async (ctx) => {
       : ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext) ? 'image' : null;
   A.need(kind, 400, '仅支持视频 / 音频 / 图片');
   A.need(R.GRADES.some(g => g.key === ctx.query.grade), 400, '请选择素材分级');
+  const declared = U.int(ctx.req.headers['content-length'], 0);
+  A.need(!declared || declared <= U.MAX_UPLOAD_BYTES, 413, `文件超过 ${U.MAX_UPLOAD_MB}MB 限制`);
   const dir = path.join(U.DATA_DIR, 'uploads', ctx.user.id);
   fs.mkdirSync(dir, { recursive: true });
   const safe = `${U.uid('file')}${ext}`;
   const local = path.join(dir, safe);
-  fs.writeFileSync(local, raw);
+  const tmp = path.join(U.TMP_DIR, `${U.uid('up')}.part`);
+  const { size } = await streamTo(ctx.req, tmp);
+  A.need(size > 0, 400, '文件为空');
+  fs.renameSync(tmp, local);
   const id = DB.insert('media_assets', {
     user_id: ctx.user.id, org_id: ctx.body?.orgId || null, project_id: ctx.query.projectId || null,
     title: U.str(ctx.query.title || name, 200), kind, grade: ctx.query.grade,
     file_name: name, storage_path: `uploads/${ctx.user.id}/${safe}`, local_path: local,
-    size: raw.length, license_note: U.str(ctx.query.licenseNote, 300) || '自有 / 已授权', created_at: U.now()
+    size, license_note: U.str(ctx.query.licenseNote, 300) || '自有 / 已授权', created_at: U.now()
   });
-  A.audit(ctx, 'remix.asset.upload', id, `${name} (${(raw.length / 1024 / 1024).toFixed(2)} MB)`);
-  return { id, kind, grade: ctx.query.grade, size: raw.length, name };
+  A.audit(ctx, 'remix.asset.upload', id, `${name} (${(size / 1024 / 1024).toFixed(2)} MB)`);
+  return { id, kind, grade: ctx.query.grade, size, name };
 });
 route('POST', '/api/remix/plan', async (ctx) => { A.requireLevel(ctx, 'editor'); return R.plan(ctx, ctx.body); });
 route('GET', '/api/remix/plans', (ctx) => ({ items: R.plans(ctx) }));
@@ -169,17 +191,44 @@ const MIME = {
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.srt': 'text/plain; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
   '.ico': 'image/x-icon', '.woff2': 'font/woff2'
 };
-function serveFile(res, file, { download = false } = {}) {
+/* 支持 HTTP Range：浏览器 <video> 需要 206 才能拖动进度、边下边播，
+   否则大成片每次都要整段重传，多人同时预览会把带宽打满。 */
+function serveFile(req, res, file, { download = false } = {}) {
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { U.fail(res, 404, '文件不存在'); return; }
   const stat = fs.statSync(file);
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
   const headers = {
-    'Content-Type': type, 'Content-Length': stat.size,
-    'Cache-Control': 'no-cache', 'Accept-Ranges': 'bytes'
+    'Content-Type': type, 'Cache-Control': 'private, no-cache', 'Accept-Ranges': 'bytes',
+    'Last-Modified': stat.mtime.toUTCString()
   };
   if (download) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file))}`;
-  res.writeHead(200, headers);
-  fs.createReadStream(file).pipe(res);
+  let start = 0, end = stat.size - 1, status = 200;
+  const range = String(req.headers.range || '').trim();
+  if (range.startsWith('bytes=') && !download) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!m || (!m[1] && !m[2])) {
+      res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}`, 'Content-Length': 0 });
+      res.end(); return;
+    }
+    if (!m[1]) start = Math.max(0, stat.size - Number.parseInt(m[2], 10));
+    else {
+      start = Number.parseInt(m[1], 10);
+      end = m[2] ? Math.min(Number.parseInt(m[2], 10), stat.size - 1) : stat.size - 1;
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= stat.size) {
+      res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}`, 'Content-Length': 0 });
+      res.end(); return;
+    }
+    status = 206;
+    headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
+  }
+  headers['Content-Length'] = Math.max(0, end - start + 1);
+  res.writeHead(status, headers);
+  if (req.method === 'HEAD') { res.end(); return; }
+  if (stat.size === 0) { res.end(); return; }
+  const rs = fs.createReadStream(file, { start, end });
+  rs.on('error', () => { if (!res.headersSent) U.fail(res, 500, '读取文件失败'); else res.destroy(); });
+  rs.pipe(res);
 }
 function serveOutput(req, res, pathname, user) {
   if (!user) { U.fail(res, 401, '请先登录'); return; }
@@ -187,10 +236,19 @@ function serveOutput(req, res, pathname, user) {
   if (!m) { U.fail(res, 404, '路径不合法'); return; }
   const job = DB.get('SELECT * FROM remix_jobs WHERE id=?', m[1]);
   if (!job) { U.fail(res, 404, '任务不存在'); return; }
+  // 组织级隔离：普通成员只能取本项目所属组织的成片，admin/owner 可跨项目审阅
+  if (A.levelOf(user) < A.ROLE_LEVEL.admin) {
+    const b = DB.get('SELECT user_id,project_id FROM remix_batches WHERE id=?', job.batch_id);
+    const orgId = b?.project_id ? DB.get('SELECT org_id FROM projects WHERE id=?', b.project_id)?.org_id : null;
+    const allowed = orgId
+      ? !!DB.get('SELECT 1 FROM members WHERE user_id=? AND org_id=?', user.id, orgId)
+      : b?.user_id === user.id; // 无项目归属的旧批次只放行创建者
+    if (!allowed) { U.fail(res, 403, '无权访问该成片'); return; }
+  }
   const dir = path.join(U.OUTPUT_DIR, job.id);
   const file = path.join(dir, path.basename(decodeURIComponent(m[2])));
   if (!file.startsWith(dir + path.sep)) { U.fail(res, 403, '路径越界'); return; }
-  serveFile(res, file, { download: req.url.includes('download=1') });
+  serveFile(req, res, file, { download: req.url.includes('download=1') });
 }
 function serveStatic(req, res, pathname) {
   if (pathname === '/' || pathname === '') pathname = '/index.html';
@@ -203,7 +261,7 @@ function serveStatic(req, res, pathname) {
   if (!file.startsWith(U.PUBLIC_DIR + path.sep)) { U.fail(res, 403, '路径越界'); return; }
   if (!fs.existsSync(file)) { U.fail(res, 404, '页面不存在'); return; }
   if (fs.statSync(file).isDirectory()) { serveStatic(req, res, path.join(pathname, 'index.html')); return; }
-  serveFile(res, file);
+  serveFile(req, res, file);
 }
 
 /* ---------------- 服务器 ---------------- */
@@ -245,6 +303,20 @@ console.log(`[init] 能力状态`, P.providerStatus());
 CRON.start();
 const PORT = U.int(process.env.PORT || process.env.SV_PORT, 3000);
 const HOST = process.env.SV_HOST || '0.0.0.0';
+// 大视频上传需要更长的请求窗口；慢连接不能把整个进程拖住。渲染在后台队列，不受此限制。
+server.requestTimeout = U.int(process.env.SV_REQUEST_TIMEOUT_MS, 10 * 60 * 1000);
+server.headersTimeout = 65000;
+server.keepAliveTimeout = 60000;
 server.listen(PORT, HOST, () => console.log(`[ready] 短视频工作台服务已启动 http://${HOST}:${PORT}`));
-process.on('SIGTERM', () => { CRON.stop(); server.close(() => process.exit(0)); });
+let shuttingDown = false;
+function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  CRON.stop();
+  P.stopFF();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 12000).unref(); // 兜底：最长等 12s 让在途请求收尾
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 module.exports = { server, routes };

@@ -1,10 +1,16 @@
-# 短视频工作台 · 云服务器一键启动
-# 启动：docker compose up -d --build     查看日志：docker compose logs -f
-# 访问：http://<服务器IP>:3000  （生产建议用 Nginx/Caddy 反代 + HTTPS，Sharecode 类静态链接不支持本服务）
+# 短视频工作台 · 云服务器生产启动
+#
+# 基础用法（HTTP，适合内网 / 先用 IP 验证）：
+#   docker compose up -d --build        → http://<服务器IP>:3000
+# 生产用法（HTTPS 域名，见 DEPLOY.md 第 2 节 / deploy/docker-compose.https.yml）：
+#   在 .env 里设 SV_DOMAIN 与 SV_BIND_ADDR=127.0.0.1，再用 Caddy 反代，公网只暴露 80/443
+#
 # 数据全部保存在 studio-data 卷：SQLite、上传素材、成片、会话密钥、审计日志
-# 首次启动会从 data/accounts.json 导入账号（仅 PBKDF2 摘要，不含明文），初始密码沿用现有凭据
-# 无 TikTok 官方权限：默认使用内置演示数据源；配置第三方合规数据 API 后才会有真实爆款指标
+# 首次启动从 data/accounts.json 导入账号（仅 PBKDF2 摘要，不含明文），初始密码沿用现有凭据
+# 无 TikTok 官方权限：默认演示数据源；配置第三方合规数据 API 后才有真实爆款指标
 # 未配置 LLM/ASR/TTS 时自动降级为本地规则引擎与占位配音，链路仍可完整跑通
+#
+# 重要：cron / 混剪队列在进程内，当前架构只能跑 1 个 studio 实例。请勿 --scale > 1。
 services:
   studio:
     build:
@@ -13,12 +19,20 @@ services:
     image: shortvideo-studio:2.0
     container_name: shortvideo-studio
     ports:
-      - "3000:3000"
+      # 走 HTTPS 反代时把 .env 的 SV_BIND_ADDR 设为 127.0.0.1，避免 3000 直接暴露公网
+      - "${SV_BIND_ADDR:-0.0.0.0}:${PORT:-3000}:3000"
     environment:
       PORT: 3000
       SV_HOST: 0.0.0.0
       SV_DATA_DIR: /app/data
       SV_TZ: Asia/Shanghai
+      TZ: Asia/Shanghai
+      NODE_ENV: production
+      # 固定会话签名密钥：容器重建 / 卷迁移后已登录用户不会被强制下线
+      SV_SECRET: ${SV_SECRET:-}
+      SV_COOKIE_SECURE: ${SV_COOKIE_SECURE:-0}
+      SV_MAX_UPLOAD_MB: ${SV_MAX_UPLOAD_MB:-200}
+      SV_REQUEST_TIMEOUT_MS: ${SV_REQUEST_TIMEOUT_MS:-600000}
       # 可选：显式设置会覆盖导入的管理员初始密码（请勿写进仓库，用 .env 提供）
       SV_ADMIN_PASSWORD: ${SV_ADMIN_PASSWORD:-}
       # 可选：第三方合规数据源（也可在「管理后台 → 云服务器管理」里配置）
@@ -29,12 +43,21 @@ services:
       SV_PUSH_WEBHOOKURL: ${SV_PUSH_WEBHOOKURL:-}
     volumes:
       - studio-data:/app/data
-    restart: unless-stopped
+    restart: always
+    stop_grace_period: 20s
+    mem_limit: ${SV_MEM_LIMIT:-4g}
+    cpus: ${SV_CPUS:-2}
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 20s
 
 volumes:
   studio-data:

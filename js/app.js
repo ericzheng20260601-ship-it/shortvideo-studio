@@ -165,11 +165,12 @@ function showGate() {
       const u = r.user || {};
       const s = { email:u.email || email, name:u.name || email.split('@')[0],
         role:(u.role === 'owner' || u.role === 'admin') ? 'admin' : 'user',
-        loginAt:store.now(), usingInitial:false, serverAuth:true };
+        loginAt:store.now(), usingInitial:!!u.mustChange, serverAuth:true };
       setSession(s);
       logAccess(`${s.name}（${s.email}）登录工作台（服务端身份）`);
       showShell(s);
       toast('欢迎回来', `${s.name}，云服务器已连接`);
+      if (s.usingInitial) setTimeout(() => toast('安全提示', '首次登录请在右上角头像 → 账户信息 → 修改密码', 'warn'), 1100);
       return;
     }
     // 静态备份站：沿用浏览器名单
@@ -190,13 +191,20 @@ function showGate() {
   };
   $('#gateSubmit').onclick = submit;
   [emailEl, passEl].forEach(el => el.onkeydown = e => { if (e.key === 'Enter') submit(); });
-  $('#gateHelp').onclick = () => modal({
-    title:'如何登录工作台', desc:'本工作台采用邀请制，按邮箱开通账号',
-    body:`<div class="block"><div class="block-head"><b>1 · 找管理员开通</b></div><div class="small muted">管理员在「管理后台 → 账号与密码」添加你的邮箱，并告知初始登录密码。</div></div>
-      <div class="block"><div class="block-head"><b>2 · 用邮箱 + 密码登录</b></div><div class="small muted">名单只保存 PBKDF2 加盐摘要，仓库与页面里都不出现明文密码；新账号需管理员导出名单并提交仓库后才能在其他设备登录。</div></div>
-      <div class="block"><div class="block-head"><b>3 · 首次登录改密码</b></div><div class="small muted">右上角头像 → 账户信息 → 修改密码。改完本机立即生效；忘记密码可请管理员「重置为初始密码」。</div></div>`,
-    actions:[{ label:'知道了', primary:true }],
-  });
+  $('#gateHelp').onclick = () => {
+    const online = svState().available;
+    modal({
+      title:'如何登录工作台', desc: online ? '邀请制 · 服务端统一账号，任意浏览器打开链接即可' : '本工作台采用邀请制，按邮箱开通账号',
+      body: online
+        ? `<div class="block"><div class="block-head"><b>1 · 找管理员开通</b></div><div class="small muted">管理员在「管理后台 → 云服务器管理 → 成员与角色」添加你的邮箱，会把<b>访问链接 + 初始密码</b>私发给你。</div></div>
+           <div class="block"><div class="block-head"><b>2 · 打开链接登录</b></div><div class="small muted">任意设备用浏览器打开同一个链接，输入邮箱与初始密码。账号、素材、混剪任务都在云服务器，换设备不丢数据。</div></div>
+           <div class="block"><div class="block-head"><b>3 · 首次登录改密码</b></div><div class="small muted">右上角头像 → 账户信息 → 修改密码，服务端立即生效；忘记密码请管理员点「重置密码」。</div></div>`
+        : `<div class="block"><div class="block-head"><b>1 · 找管理员开通</b></div><div class="small muted">管理员在「管理后台 → 账号与密码」添加你的邮箱，并告知初始登录密码。</div></div>
+           <div class="block"><div class="block-head"><b>2 · 用邮箱 + 密码登录</b></div><div class="small muted">名单只保存 PBKDF2 加盐摘要，仓库与页面里都不出现明文密码；新账号需管理员导出名单并提交仓库后才能在其他设备登录。</div></div>
+           <div class="block"><div class="block-head"><b>3 · 首次登录改密码</b></div><div class="small muted">右上角头像 → 账户信息 → 修改密码。改完本机立即生效；忘记密码可请管理员「重置为初始密码」。</div></div>`,
+      actions:[{ label:'知道了', primary:true }],
+    });
+  };
   setTimeout(() => emailEl.focus(), 100);
 }
 
@@ -232,7 +240,7 @@ function wireChrome() {
     modal({ title:'账户信息', desc:`${s?.name || '创作者'} · ${s?.role === 'admin' ? '管理员' : '创作者'}`,
       body:`<div class="block"><div class="block-head"><b>登录邮箱</b></div><div class="small muted mono">${esc(s?.email || '—')}</div></div>
         <div class="block"><div class="block-head"><b>密码状态</b><span class="badge ${s?.usingInitial ? 'amber' : ''}">${s?.usingInitial ? '初始密码' : '已自定义'}</span></div>
-          <div class="small muted">${s?.usingInitial ? '建议尽快修改为仅自己知道的密码。' : '修改后本机立即生效；其他设备需同步账号名单。'}</div></div>
+          <div class="small muted">${svState().available ? '密码由云服务器统一校验，修改后所有设备立即生效。' : (s?.usingInitial ? '建议尽快修改为仅自己知道的密码。' : '修改后本机立即生效；其他设备需同步账号名单。')}</div></div>
         <div class="block"><div class="block-head"><b>登录时间</b></div><div class="small muted">${esc(s?.loginAt || '—')}</div></div>
         <div class="block"><div class="block-head"><b>云服务器</b><span class="badge ${svState().available ? 'teal' : ''}">${svState().available ? '已连接' : '离线'}</span></div>
           <div class="small muted">${svState().available ? '身份、素材、拆解报告与混剪任务由服务端统一管理；后台可配置数据源、成员与配额。' : '当前为静态备份站，工程保存在本机浏览器；管理后台可导出快照提交到仓库。'}</div></div>`,

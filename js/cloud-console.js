@@ -59,6 +59,42 @@ async function act(fn, msg) {
   catch (e) { toast('操作失败', e.message, 'error'); return null; }
 }
 const val = (el, sel) => ($(sel, el)?.value || '').trim();
+
+/* 邀请制开通：管理员创建 / 重置成员后，把「固定链接 + 邮箱 + 一次性初始密码」
+   打包成可复制的文本。成员拿到链接就能在任意浏览器登录并上传、混剪、下载成片。 */
+function inviteText({ email, password, role, url }) {
+  return [
+    '短视频工作台 · 邀请',
+    `访问链接：${url}`,
+    `登录邮箱：${email}`,
+    `初始密码：${password}`,
+    `角色：${role || '创作者（editor）'}`,
+    '',
+    '打开链接后用上面的邮箱与初始密码登录；首次登录请在右上角头像 → 账户信息 → 修改密码。',
+    '本消息含一次性凭据，请仅发给本人，不要转发或贴到公开群。'
+  ].join('\n');
+}
+function showInvite(info) {
+  const text = inviteText(info);
+  modal({
+    title: '邀请信息（仅显示一次）',
+    desc: `已为 ${info.email} 开通账号，请立即复制并私发给本人`,
+    wide: true,
+    body: `<div class="sv-notice"><b>初始密码只在创建 / 重置时返回一次</b>：服务端只保存 PBKDF2 摘要，之后无法找回，只能再次重置。<br>
+      当前访问链接：<span class="mono">${esc(info.url)}</span><br>成员无需安装任何软件，浏览器打开即可进行视频生产。</div>
+      <textarea id="svInviteText" class="sv-input" rows="9" readonly>${esc(text)}</textarea>`,
+    actions: [
+      { label: '复制邀请信息', primary: true, close: false, onClick: async () => {
+        const ta = document.getElementById('svInviteText');
+        try { await navigator.clipboard.writeText(text); }
+        catch { try { ta?.select(); document.execCommand('copy'); } catch { /* 手动复制 */ } }
+        toast('已复制', '把邀请信息私发给成员即可');
+        return false;
+      } },
+      { label: '我已保存，关闭' }
+    ]
+  });
+}
 const num = (el, sel, d = 0) => Number($(sel, el)?.value) || d;
 const tbl = (cols, rows, emptyText = '暂无数据') => rows.length
   ? `<div class="sv-table-wrap"><table class="sv-table"><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`
@@ -446,7 +482,7 @@ async function adminPanel(el, st) {
     $('#svMembers', el).innerHTML = tbl(['邮箱', '组织 / 项目', '角色', '状态', '操作'], items.map(m => `<tr>
       <td>${esc(m.email)}</td><td>${esc(m.orgName || '')}${m.projectName ? ' / ' + esc(m.projectName) : ''}</td>
       <td><select data-role="${esc(m.id)}">${['viewer', 'reviewer', 'editor', 'admin', 'owner'].map(r => `<option value="${r}" ${r === m.role ? 'selected' : ''}>${r}</option>`).join('')}</select></td>
-      <td>${esc(m.status)}</td><td class="sv-ops"><button class="btn btn-sm" data-act="member-status" data-id="${esc(m.user_id)}" data-email="${esc(m.email)}" data-status="${m.status === 'active' ? 'disabled' : 'active'}">${m.status === 'active' ? '停用' : '启用'}</button></td></tr>`), '暂无成员');
+      <td>${esc(m.status)}</td><td class="sv-ops"><button class="btn btn-sm" data-act="member-reset" data-id="${esc(m.user_id)}" data-email="${esc(m.email)}">重置密码</button><button class="btn btn-sm" data-act="member-status" data-id="${esc(m.user_id)}" data-email="${esc(m.email)}" data-status="${m.status === 'active' ? 'disabled' : 'active'}">${m.status === 'active' ? '停用' : '启用'}</button></td></tr>`), '暂无成员');
     $$('[data-role]', el).forEach(s => s.onchange = async () => { await act(() => post(`/api/collab/members/${s.dataset.role}/role`, { role: s.value }), '角色已更新'); });
   }
   renderMembers(members.items || []);
@@ -468,9 +504,36 @@ async function adminPanel(el, st) {
     else if (a === 'member-add') {
       const body = { email: val(el, '#svMEmail'), name: val(el, '#svMName'), password: val(el, '#svMPwd'), role: val(el, '#svMRole') };
       const r = await act(() => post('/api/collab/members', body), '成员已添加');
-      if (r) { const m = await get('/api/collab/members'); renderMembers(m.items || []); }
+      if (r) {
+        const m = await get('/api/collab/members'); renderMembers(m.items || []);
+        if (r.created && r.initialPassword) {
+          showInvite({ email: r.email, password: r.initialPassword, role: r.role, url: location.href.split('#')[0] });
+        } else toast('成员已加入', '该邮箱已有账号，沿用其现有密码');
+        ['#svMEmail', '#svMName', '#svMPwd'].forEach(s => { const i = $(s, el); if (i) i.value = ''; });
+      }
     }
-    else if (a === 'member-status') { await act(() => post(`/api/collab/users/${t.dataset.id}/status`, { status: t.dataset.status }), '状态已更新'); }
+    else if (a === 'member-reset') {
+      const email = t.dataset.email, id = t.dataset.id;
+      modal({ title: '重置初始密码', desc: email,
+        body: `<label class="field-label">新的初始密码（≥8 位含字母数字，留空自动生成）</label>
+          <input id="svResetPwd" class="sv-input" placeholder="留空自动生成" />
+          <div class="field-hint">重置会立即注销该成员的全部登录会话；新密码只在本次返回一次。</div>`,
+        actions: [
+          { label: '取消' },
+          { label: '确认重置', primary: true, close: false, onClick: async (close) => {
+            const v = (document.getElementById('svResetPwd')?.value || '').trim();
+            const pwd = v || `Sv@${Math.random().toString(36).slice(2, 10)}9`;
+            const r = await act(() => post(`/api/collab/users/${id}/reset`, { password: pwd }), '密码已重置');
+            close();
+            if (r) showInvite({ email, password: r.initialPassword || pwd, role: '沿用原角色', url: location.href.split('#')[0] });
+            return false;
+          } }
+        ] });
+    }
+    else if (a === 'member-status') {
+      await act(() => post(`/api/collab/users/${t.dataset.id}/status`, { status: t.dataset.status }), '状态已更新');
+      const m = await get('/api/collab/members'); renderMembers(m.items || []);
+    }
   });
 }
 

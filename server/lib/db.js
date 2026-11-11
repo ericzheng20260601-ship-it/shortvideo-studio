@@ -211,6 +211,7 @@ function seed() {
     'quota.jobsPerDay': 50,
     'quota.rendersPerDay': 50,
     'remix.maxConcurrent': 2,
+    'remix.staleMinutes': 30,
     'remix.ffmpegPath': '',
     'content.aigcLabel': true,
     'content.bannedWords': ['最', '第一', '绝对', '根治', '100%有效', '国家级', '包治', '永久']

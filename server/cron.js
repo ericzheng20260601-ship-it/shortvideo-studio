@@ -1,4 +1,6 @@
 'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
 const U = require('./lib/util');
 const DB = require('./lib/db');
 const D = require('./modules/discover');
@@ -7,6 +9,31 @@ const A = require('./lib/auth');
 
 let timer = null;
 let pumping = false;
+let lastRecover = 0;
+
+/* 进程重启 / 容器漂移 / OOM 后，status='running' 的任务会永久卡死：
+   nextQueued 只捞 queued，pump 又把 running 计入并发槽，队列从此不再推进。
+   启动时把这些任务放回 queued；运行时每 5 分钟兜底扫一次。
+   重跑是幂等的：已生成的画幅会被复用，中断写坏的半成品直接清掉重渲。 */
+function staleMinutes() { return U.clamp(U.int(DB.getConfig('remix.staleMinutes'), 30), 5, 240); }
+function recoverStaleJobs({ all = false } = {}) {
+  const cutoff = new Date(Date.now() - staleMinutes() * 60000).toISOString();
+  const rows = all
+    ? DB.all("SELECT id,batch_id FROM remix_jobs WHERE status='running'")
+    : DB.all("SELECT id,batch_id FROM remix_jobs WHERE status='running' AND updated_at < ?", cutoff);
+  for (const j of rows) {
+    // 被强杀的 ffmpeg 可能留下可播放但截断的 MP4，清掉未完成的画幅避免当成成片复用
+    try {
+      const dir = path.join(U.OUTPUT_DIR, j.id);
+      for (const f of fs.readdirSync(dir)) if (/^output_.*\.mp4$/.test(f)) fs.rmSync(path.join(dir, f), { force: true });
+    } catch { /* 目录不存在时忽略 */ }
+    DB.update('remix_jobs', j.id, { status: 'queued', stage: '等待续跑', progress: 10, error: null, updated_at: U.now() });
+    DB.insert('job_events', { job_id: j.id, ts: U.now(), stage: '恢复', message: all ? '进程退出，任务放回队列' : '检测到僵死任务，自动放回队列' });
+    R.syncBatchCounts(j.batch_id);
+  }
+  if (rows.length) console.log(`[queue] 恢复 ${rows.length} 个中断任务`);
+  return rows.length;
+}
 
 function hourNow() {
   const tz = U.str(DB.getConfig('discover.timezone')) || 'Asia/Shanghai';
@@ -26,6 +53,7 @@ async function ensureInitialSync() {
   }
 }
 async function tick() {
+  if (Date.now() - lastRecover > 5 * 60000) { lastRecover = Date.now(); recoverStaleJobs(); }
   const d = dayInTz(), h = hourNow();
   const syncHour = U.int(DB.getConfig('discover.syncHour'), 8);
   const digestHour = U.int(DB.getConfig('discover.digestHour'), 9);
@@ -52,12 +80,18 @@ async function pump() {
   } finally { pumping = false; }
 }
 function start() {
+  recoverStaleJobs();
+  lastRecover = Date.now();
   ensureInitialSync().then(() => tick());
   timer = setInterval(() => tick().catch(e => console.error('[cron] tick error', e.message)), 15000);
   timer.unref?.();
-  console.log('[cron] 定时任务已启动（同步 / 日报 / 混剪队列）');
+  console.log('[cron] 定时任务已启动（同步 / 日报 / 混剪队列 / 僵死任务恢复）');
 }
-function stop() { if (timer) clearInterval(timer); }
+function stop() {
+  if (timer) clearInterval(timer);
+  // 优雅退出：把仍在跑的任务放回队列，避免下次启动后永久卡在 running
+  recoverStaleJobs({ all: true });
+}
 function status() {
   return {
     timezone: U.str(DB.getConfig('discover.timezone')),
@@ -70,4 +104,4 @@ function status() {
     queueWaiting: DB.get("SELECT count(*) AS n FROM remix_jobs WHERE status='queued'")?.n || 0
   };
 }
-module.exports = { start, stop, tick, pump, status, ensureInitialSync };
+module.exports = { start, stop, tick, pump, status, ensureInitialSync, recoverStaleJobs };

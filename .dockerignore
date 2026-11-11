@@ -3,6 +3,8 @@
 .workbuddy
 server/node_modules
 server/data
+backups
+deploy
 data/initial-access.txt
 *.sqlite
 *.sqlite-wal
