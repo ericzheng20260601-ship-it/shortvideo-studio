@@ -8,19 +8,32 @@ class HttpError extends Error {
 }
 const need = (cond, status, msg) => { if (!cond) throw new HttpError(status, msg); };
 
-function tokenFrom(req) {
-  const h = req.headers.authorization || '';
-  if (h.startsWith('Bearer ')) return h.slice(7).trim();
-  const cookie = req.headers.cookie || '';
+/* 部分托管网关会改写/注入 Authorization 头，因此按优先级收集多个候选令牌：
+   自定义头 X-SV-Token > 同源 Cookie sv_token > 标准 Bearer。逐个验签，取第一个有效的。 */
+function tokenCandidates(req) {
+  const h = req.headers || {};
+  const out = [];
+  if (h['x-sv-token']) out.push(String(h['x-sv-token']).trim());
+  const cookie = h.cookie || '';
   const m = cookie.match(/(?:^|;\s*)sv_token=([^;]+)/);
-  return m ? decodeURIComponent(m[1]) : '';
+  if (m) {
+    let v; try { v = decodeURIComponent(m[1]); } catch { v = m[1]; }
+    out.push(v);
+  }
+  const auth = String(h.authorization || '');
+  if (auth.startsWith('Bearer ')) out.push(auth.slice(7).trim());
+  return out.filter(Boolean);
 }
+function tokenFrom(req) { return tokenCandidates(req)[0] || ''; }
 function userFromReq(req) {
-  const p = U.readToken(tokenFrom(req));
-  if (!p || !p.sid) return null;
-  const s = DB.get('SELECT * FROM sessions WHERE token_id=? AND expires_at>?', p.sid, U.now());
-  if (!s) return null;
-  return DB.get('SELECT * FROM users WHERE id=? AND status=?', s.user_id, 'active') || null;
+  for (const t of tokenCandidates(req)) {
+    const p = U.readToken(t);
+    if (!p || !p.sid) continue;
+    const s = DB.get('SELECT * FROM sessions WHERE token_id=? AND expires_at>?', p.sid, U.now());
+    if (!s) continue;
+    return DB.get('SELECT * FROM users WHERE id=? AND status=?', s.user_id, 'active') || null;
+  }
+  return null;
 }
 function login(email, password, req) {
   const u = DB.get('SELECT * FROM users WHERE email=? AND status=?', U.lower(email), 'active');
@@ -33,8 +46,10 @@ function login(email, password, req) {
   return { token, user: publicUser(u) };
 }
 function logout(req) {
-  const p = U.readToken(tokenFrom(req));
-  if (p?.sid) DB.run('DELETE FROM sessions WHERE token_id=?', p.sid);
+  for (const t of tokenCandidates(req)) {
+    const p = U.readToken(t);
+    if (p?.sid) DB.run('DELETE FROM sessions WHERE token_id=?', p.sid);
+  }
 }
 function publicUser(u) {
   return { id: u.id, email: u.email, name: u.name, role: u.global_role, mustChange: !!u.must_change };

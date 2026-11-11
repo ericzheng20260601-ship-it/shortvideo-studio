@@ -16,7 +16,7 @@ async function raw(method, path, body, { binary, headers = {}, timeout = 30000 }
     const r = await fetch(path, {
       method, credentials: 'same-origin',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}`, 'X-SV-Token': token } : {}),
         ...(body && !binary ? { 'Content-Type': 'application/json' } : {}),
         ...headers
       },
