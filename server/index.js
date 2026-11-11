@@ -194,7 +194,9 @@ function serveOutput(req, res, pathname, user) {
 }
 function serveStatic(req, res, pathname) {
   if (pathname === '/' || pathname === '') pathname = '/index.html';
-  const blocked = /^\/(server|data|\.git|\.workbuddy)(\/|$)/.test(pathname);
+  // data/accounts.json 只含 PBKDF2 摘要与邮箱，静态备份站也公开同名文件；Node 服务放行它，
+  // 避免登录门误报「名单文件未加载」。其余 data/ 内容（运行时数据）一律禁止访问。
+  const blocked = /^\/(server|data|\.git|\.workbuddy)(\/|$)/.test(pathname) && pathname !== '/data/accounts.json';
   if (blocked) { U.fail(res, 403, '禁止访问'); return; }
   let rel = decodeURIComponent(pathname).replace(/^\/+/, '');
   const file = path.resolve(U.PUBLIC_DIR, rel);
