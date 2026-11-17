@@ -1,0 +1,63 @@
+{
+  "name": "shortvideo-studio-desktop",
+  "version": "2.0.0",
+  "private": true,
+  "description": "短视频工作台桌面版：安装包内置 Node 22 + ffmpeg + SQLite，邮箱登录",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "stage": "node stage-app.js",
+    "runtime": "node prepare-runtime.js",
+    "runtime:dry": "node prepare-runtime.js --dry-run",
+    "dist:mac": "npm run stage && electron-builder --mac",
+    "dist:win": "npm run stage && electron-builder --win",
+    "dist:linux": "npm run stage && electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "cn.workbuddy.shortvideo-studio",
+    "productName": "短视频工作台",
+    "copyright": "内部使用 · 请勿外发",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "launcher.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "staging/app",
+        "to": "app",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "runtime",
+        "to": "runtime",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.video",
+      "identity": null
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Video;AudioVideo"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

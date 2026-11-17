@@ -20,7 +20,89 @@ C 形态目前仍保留作验收站；它需要在网关 Cookie `__wb_rsc` 有�
 
 **E 是 C 的入口层加固，不替代 A。** 用资料库发布态页面（与 chewtrue 工作台同一形态）产出免登录固定短链作团队统一入口，成员点击后跳到 Node 服务登录生产。好处有三：成员只记一条短链；每次跳转重新携带 `sharecode`，清缓存/换设备不再导致入口失效；以后换成 A 的正式域名只需改门户里的跳转目标，成员收藏的短链不变。代价是门户只提供只读快照、公开页不可写，且生产数据的持久性仍取决于后端形态。完整 SOP 见 `deploy/PORTAL.md`，模板与快照脚本在 `deploy/library-portal.html`、`deploy/build-portal-snapshot.py`。
 
+**E 已上线（2026-11-11 13:41）**：门户节点落在「跨境电商项目 / 短视频工作台」文件夹，编辑态 `https://www.workbuddy.cn/space/d/vhHoZy3ibiOededcskT5PS`，发布态团队短链 `https://workbuddy.link/p/vhHoZy3ibiOededcskT5PS`，跳转目标为托管域 `?sharecode=5PAHXG5GGV`。发布态是**冻结快照**，数据变化需按 PORTAL.md 第 3 节走「重建快照 → 重导 → republish → 复核」四步。
+
 > 注意：**不能把整个工作台改成资料库发布页或 Cloudflare Workers**。发布态是静态快照、匿名写操作被平台拦截；Workers 是 V8 隔离，无法运行 ffmpeg 原生二进制。只要「批量混剪出真 MP4」是硬需求，就必须保留一台能跑 ffmpeg、有持久磁盘的 Node 进程。详见工作区《短视频工作台_复用Chewtrue部署方式评估_2026-11-11.md》。
+
+### 0.1 不买服务器 / 不买域名的可行形态
+
+「不买服务器」不等于「不需要一台能跑 ffmpeg 的机器」，只是这台机器可以不由你付费。按可行性排序：
+
+| 形态 | 月费用 | 代码改动 | 持久盘 | 说明 |
+|---|---|---|---|---|
+| **C + E + 自动备份**（当前线上 + 门户短链） | 0 | 无 | ⚠ 沙箱卷 | 立即可用；必须把 `npm run backup` 产物外送到对象存储，防实例重建丢数据 |
+| **F. Oracle Cloud Always Free VM** | 0 | 无 | ✅ 200GB 块盘 | 永久免费 2 OCPU / 12GB ARM + 10TB 出站，本仓 compose/Caddy 原样可用；把 `remix.maxConcurrent` 降到 1、限制 ffmpeg 线程；注意 2026-06 起 A1 额度减半、Home Region 不可改、闲置可能回收 |
+| **G. 自有常开电脑 + Cloudflare Tunnel** | 0 | 少量 | ✅ 本机硬盘 | 出站隧道免公网 IP / 免端口映射 / 自动 HTTPS；**免费档请求体上限 100MB**，需把 `SV_MAX_UPLOAD_MB` 调到 ≤90 或改造分片上传；Quick Tunnel 域名会变，长期用命名隧道 |
+| H. 免费 PaaS（Render / Cloud Run / Koyeb） | 0 | 大改 | ❌ | 休眠 + 临时盘 + 低配，需把 SQLite / 素材 / 队列全部外置，改造量接近重写，不建议 |
+| I. 浏览器端渲染 + 纯静态托管 | 0 | 重写 | ❌ | 唯一真正无后端；但大素材、50 条批量、RBAC / 共享素材库 / 审计全部失效 |
+
+**推荐组合**：先用 C+E 让团队零成本用起来并外送备份，再迁到 F（或 G）；迁移时门户短链只改跳转目标，成员收藏链接不变。完整调研与 2026 年各平台免费额度变化见工作区《短视频工作台_零服务器部署方案_2026-11-11.md》。
+
+**两阶段可执行 SOP**：`deploy/free/README.md`。① 阶段新增 `GET /api/admin/backup`（仅管理员，流式返回含 SQLite 快照 / 会话密钥 / 素材 / 成片的 tar.gz）与 `deploy/free/pull-backup.sh`（外部定时拉取、校验、AES-256 加密、可选 rclone 转存）；② 阶段提供 `deploy/free/oci-init.sh`（ARM 初始化、免费 HTTPS 域名、并发调优、每日备份与探活）、`restore-backup.sh`（含回滚包与会话密钥对齐）、`.env.free.example`。**备份接口已于 2026-11-11 13:40 随线上重新发布生效**；当前仅剩「定时外送」未启用（`deploy/free/github-actions-backup.yml` 是模板，未复制到 `.github/workflows/`）。
+
+**2026-11-11 13:40 重新发布后的线上实测**（`https://shortvideo-studio-03074.app.workbuddy.host/?sharecode=5PAHXG5GGV`，链接与 sharecode 保持不变）：health 200 / v2.0.0、`providers.render=ffmpeg`、静态首页 200、`Range: bytes=0-1023` → **206**（`content-range: bytes 0-1023/48690`）、未登录 `/api/config` 401、`/media/outputs/` 401、`/data/` 403；管理员邮箱登录成功（owner）；**`GET /api/admin/backup` 未登录 401、管理员 200**（22.8KB tar.gz，含 `studio.sqlite` / `secret.key` / `README.txt` / `uploads/` / `outputs/`，带 `content-disposition` 下载头）。`/api/remix/batches`、`/api/remix/assets` 仍为 0，重新发布未丢数据。
+
+即：**视频生产、播放与「把数据导出成备份」三条链路都已可用**；但托管域沙箱卷仍不保证跨实例重建，备份文件目前只存在请求方本地，**必须有定时外送 + 常驻机还原，才能做到「视频长期不丢」**。发布态门户只解决入口链接，见 `deploy/PORTAL.md` 第 6 节。
+
+#### 0.1.1 用腾讯系网盘承接「备份外送」
+
+可以，但**腾讯网盘（新，资料库底层）与腾讯微云是两个产品，都没有 rclone 原生 backend**，接进来要换通道：
+
+| 目标 | 通道 | 容量 / 费用（2026-11-11） | 评价 |
+|---|---|---|---|
+| 腾讯网盘（新） | WorkBuddy 资料库上传（单文件 ≤100 MiB）/ CLI·MCP（个人版仍标「申请体验」） | 内测免费 5GB；1TB 必须开 Buddy One VIP **¥700/月**（连续包年 ¥6720），且与资料库/文档/ima 共用 | 单纯存备份性价比最低 |
+| 腾讯微云 | 官方 MCP / WorkBuddy「微云」连接器（两阶段 FTN 分片上传） | 免费约 5–10GB；超会 **6TB ¥30/月**；空间券 1TB ¥600/年；上传流量券另购 | 便宜量大，但授权与限速要盯 |
+| 腾讯云 COS | **rclone 原生支持**，只填 `SV_RCLONE_REMOTE` | 新用户标准存储 50GB 免费 6 个月，之后约 ¥0.099–0.118/GB/月；入流量免费 | 改动最小，推荐 |
+| Cloudflare R2 / OCI 对象存储 | rclone 原生支持 | 免费 10GB / 20GB | 零成本首选 |
+
+三条硬注意：① 全量备份包含所有素材与成片，**每日一份、保留 14 份时 20GB 稳态数据约需 280GB**，免费 5GB 一天就满；② 当前 `pull-backup.sh` **只轮转本地**，`rclone copyto` 到远端是纯追加，接入前必须补远端旧包清理；③ 网盘只保证「备份有地方放」，**不提供实例重建后的自动恢复**，仍需 ② 阶段的常驻机器执行 `restore-backup.sh`。不推荐用 alist/OpenList 的逆向 WebDAV 驱动接微云（不维护、QQ Cookie 仅 48h）。完整核价与接入路径见工作区《短视频工作台_腾讯网盘备份与ClipForge部署调研_2026-11-11.md》。
+
+#### 0.1.2 零成本 / 低成本的其他两阶段组合
+
+| 档 | ① 备份外送 | ② 常驻机器 | 年成本 | 备注 |
+|---|---|---|---|---|
+| 0 | **GitHub Actions cron → artifact**（500MB 免费档、7 天保留） | 自有常开电脑 + Tunnel，或长期留 ① | ¥0 | 零信用卡、零新账号；管理员电脑不必常开。模板 `deploy/free/github-actions-backup.yml`（**复制到 `.github/workflows/` 才生效**），单包 >50MB 会闸门失败 |
+| 1 | GitHub Actions / crontab → R2 10GB | OCI Always Free | ¥0 | 需绑支付方式；R2 免费档开通也要绑卡，额度内不扣费 |
+| **2（推荐）** | **¥99/年国内 ECS 上跑 crontab** | 同一台 ECS 随时 `docker compose up -d` 转正 | **¥99 → ¥109–154** | 锚点机只做出站拉备份 + SSH，**不绑域名、不开 80/443，因此转名前不需要 ICP 备案**；转正再买域名备案 |
+| 3 | ECS 本机备份 / COS | 直接形态 A 正式域名 | ¥109–154 | 备案 7–20 工作日，等待期用 ① 托管域顶着 |
+| 4 | R2 10GB | 海外低价 VPS（Hetzner CX23 €5.49/月） | ¥540 起 | 免备案但国内访问慢；2026 两轮涨价 |
+
+**2026 年判断**：能长期零成本跑 ffmpeg + 持久盘的常驻 VM 仍只有 Oracle A1。GCP e2-micro（1GB 内存、**出站仅 1GB/月**）、AWS 新免费层（6 个月 credits 后关账户）、Azure B1s（12 个月）都跑不动本项目。完整核价、决策树与落地步骤见工作区《短视频工作台_零成本与低成本两阶段方案_2026-11-11.md》。
+
+明确排除：Cloudflare Workers / Vercel / Pages / 资料库发布页承载生产写操作（无原生二进制、无持久 FS、CPU 时长受限）。
+
+#### 0.1.3 J. 桌面安装包（不买服务器，用户装到自己的设备）
+
+可以做成 `.dmg` / `.exe` / `.AppImage`：安装包自带 **Node 22 便携运行时 + ffmpeg + 全部服务端源码 + 静态前端**，用户双击启动即在本机起 `127.0.0.1:17800`，**登录仍是邮箱 + 密码（走本机 `/api/auth/login`）**，首次启动弹窗给出随机管理员初始密码。与 ClipForge 桌面版同构。工程在 `desktop/`，SOP 见 `desktop/README.md`，完整评估见工作区《短视频工作台_桌面安装包方案_2026-11-11.md》。
+
+| 用法 | 做法 | 结果 |
+|---|---|---|
+| **J-A 单机版** | 每人各装一份，默认 `SV_APP_HOST=127.0.0.1` | 账号/素材/成片各管各的，**多人协作失效** |
+| **J-B 便携服务器（推荐）** | 团队一台常开电脑装，设 `SV_APP_HOST=0.0.0.0` | 同事浏览器访问 `http://<内网IP>:17800/`，仍用同一套邮箱账号，数据只有一份；无域名、无备案、无公网 IP |
+
+**两个硬边界**：① `node:sqlite` 要求 Node ≥22.5，安装包必须随包带运行时，启动器会逐个候选做能力自检；② **J-A 下 SQLite 就在安装者手里，改库即可提权/绕配额/抹审计**，邮箱登录只防误用不防有意绕过——要权限真正不可绕过，中心端（J-B 的那台机器 / 形态 A / 线上托管域）必须存在。
+
+成本：构建与运行 ¥0；不签名可分发，但每人首次打开要手动放行 Gatekeeper / SmartScreen；去掉拦截需 Apple Developer ¥688/年或 Windows OV 证书约 ¥1000–2000/年。异地访问仍需内网穿透或回到 F/档 2。**升级只需替换 `resources/app/`，用户数据目录（含 `secret.key`）不动**。本机已跑通启动器登录链路、二次启动幂等、LAN 绑定与 `npm run smoke` 56/56；**未产出真安装包、未签名、未提交 git**。
+
+### 0.2 常见故障：导入视频后没有生成视频
+
+先看 `/api/status` 新增的 `render: { source, encoder, hasX264, encoders }`，再看 `/api/remix/batches` 里 job 的 `error`。2026-11-11 线上实测到的三类原因：
+
+1. **`Unknown encoder 'libx264'`** —— 系统 ffmpeg 被裁剪，只有音频编码器。修复：`ffmpegBin()` 改为优先随依赖安装的 `ffmpeg-static`，`videoEncoder()` 按 `libx264 → libopenh264 → mpeg4` 自适应，`SV_FORCE_VIDEO_ENCODER` 可强制指定。注意 `providers.render=ffmpeg` 只说明二进制存在，**不代表编码器齐全**。
+2. **界面链路混淆** —— `#/auto` 页上方是云面板「提示词批量混剪」（才有真 MP4），下方静态「智能成片」按设计只产出工程包 JSON。在下方选的视频只留在本机内存，不上传服务端。
+3. **上传的视频没进渲染输入** —— 静态「素材库」走 WorkBuddy 云存储，与服务端 `media_assets` 不互通；必须走云面板「素材四维分级与上传」（`/api/remix/upload`）。修复后 `renderOne()` 会以本地视频素材为画面主体，按 `job.idx` 轮换，无素材才用纯色占位并给出确认提示。
+
+已失败的批次不必重建：`POST /api/remix/batches/:id/resume`（面板「断点续跑」）会把 `failed` 任务重新置为 `queued`；也可只重试单个任务 `POST /api/remix/jobs/:id/retry`。**先上传素材再续跑**，否则成片仍是占位画面。完整证据、修复清单与验证结果见工作区《短视频工作台_智能成片无视频故障排查_2026-11-11.md》。
+
+**2026-11-11 15:15 已按用户明确授权重新发布线上（链接与 sharecode 不变）**：`/api/status.render` 实测 `{ source: "ffmpeg-static", encoder: "libx264", hasX264: true, encoders: ["libx264","mpeg4"] }`，说明发布沙箱 `npm install` 装上了带 H.264 的完整 ffmpeg，**无需降级 mpeg4**。线上端到端验证：上传 17KB 测试视频 → 重试旧批次的 1 个失败任务 → **done 1/1**，事件日志「本条使用 sv-publish-verify.mp4」，成片 `output_9x16.mp4` 共 633,474 字节、`Range` 返回 **206** `video/mp4`、文件头 `ftypisom`，备份包能导出 3 个画幅成片。批次计数由 `done=0/failed=27` 变为 `done=1/failed=26`，其余 26 个任务保留待上传真实素材后续跑。发布前已把 `server/data/`、`backups/`、`desktop/runtime/ffmpeg` 临时移出发布目录并还原，避免本地运行时数据与会话密钥随包上传。
+
+### 0.3 智能成片页：一步式流程（2026-11-11 15:55）
+
+`#/auto` 页整体重写为单表单流程：**导入视频（选中即自动上传服务端）→ 提示词 → 一句话校准 → 赛道 → 风格 → 变体矩阵（钩子/字幕/时长 chips）→ 生产数量（1–50）→ 唯一「开始生成」按钮**。点击后自动串「上传确认 → `/api/remix/plan` → `/api/remix/batches` → 3 秒轮询渲染」，右侧展示进度条、任务明细与成片预览/下载（3 画幅 + SRT + 配音），失败任务可单条重试，运行中可取消。旧「提示词批量混剪」云面板不再挂载到本页（`PANELS` 已移除 `auto` 项，`remixPanel` 保留未引用）；拆解报告的「送到混剪」仍通过 `sv.pendingReport` 接入。离线/未登录时不再产出模拟工程包，而是明确提示需登录云服务。
+
+配套服务端改动：`POST /api/remix/batches` 新增 `count` 参数——变体矩阵组合多于 `count` 时截断、少于时轮换复制补足（上限仍 50），让「生产数量」成为权威参数。已验证：矩阵 1 组合×count=3 → 3 任务全 done；9 组合×count=4 → 截为 4 条；count=51 → 400。`npm run smoke` 56/56 无回归。**该改动属服务端+前端代码，需重新发布线上才生效。**
+
+后续增强（2026-11-11 17:15）：① 进度轮询修复为 3 秒循环 + 失败退避重试，批次 ID 存 `sessionStorage`，页面刷新自动恢复进行中/已结束批次；② 表单新增「⑧ 配音语言（普通话/粤语/英语/日语）」与「⑨ 画幅（9:16 / 1:1 / 16:9 多选）」，随变体写入 `voice`/`ratios`，服务端只渲染所选画幅；③ 「生成进度」「成片结果」卡片移至「开始生成」按钮下方单列排布；④ 新增 `GET /api/remix/batches/:id/export`（创建者或 admin），把批次内全部已完成成片（多画幅 MP4 + SRT + 配音）打成 tar.gz 供「成片结果」页一键批量导出。smoke 59/59。
 
 ## 1. 运行要求
 
@@ -146,11 +228,29 @@ Body:    { "day": "YYYY-MM-DD", "limit": 40, "categories": [...], "countries": [
 |---|---|
 | 每日发现 | 演示数据 + 真实定时同步、指标快照、榜单计算 |
 | 拆解分析 | 本地规则引擎：ASR 时间轴样例、分镜切点、钩子/viral score、反推提示词、VOC、判官团 |
-| 批量混剪 | 提示词 → 分镜 JSON、变体矩阵、真实 ffmpeg 渲染、TTS 占位静音轨、SRT、QC、物料包 |
+| 批量混剪 | 提示词 → 分镜 JSON、变体矩阵、真实 ffmpeg 渲染、**Edge TTS 真实配音**（9 语言 Neural 音色）、SRT、QC、物料包 |
+| 素材兜底 | 无本地素材时自动从 Wikimedia Commons（CC 源）抓 b-roll；国内网络不可达时回退占位画面 |
+| 爆款雷达 | 演示数据；接入真实数据自动生效，双通道：① 配 `radar.youtubeKey` 走 YouTube Data API v3（免费但 Google Cloud 需绑卡开 Key）；② 不配 Key 走开源 Invidious 公共实例（免 Key 免账号）。6h 服务端缓存 + 30min 前端缓存 + 失败 10min 冷却期（刷新可击穿）。**注意：两条通道都要求运行环境能访问 Google/YouTube 站点**（国内网络不可达，海外服务器如 OCI 生效）；不可达时自动回退演示数据并标注原因 |
 | 日报推送 | 站内收件箱 |
 | 多人协作 | 完整的服务端鉴权、组织/项目、角色、批注、版本、审批、审计、配额 |
 
 所有降级结果都会标注 `source=local` / `source=demo`，不会伪装成真实平台数据。
+
+### 6.1 CLI 流水线（借鉴 ClipForge）
+
+```bash
+# 环境变量：SV_CLI_URL / SV_CLI_EMAIL / SV_CLI_PASSWORD / SV_CLI_LANG(en-US) / SV_CLI_COUNT(1)
+node server/cli.mjs status                          # 服务健康与队列
+node server/cli.mjs trends --limit=5                # 每日发现条目
+node server/cli.mjs script --prompt="..."           # 生成分镜脚本
+node server/cli.mjs create --plan=<id> --count=3    # 创建批次并等待完成
+node server/cli.mjs qc --batch=<id>                 # 成片质检汇总
+node server/cli.mjs gate --batch=<id> --min-score=60  # 发布闸门（exit 0/1）
+node server/cli.mjs credits --batch=<id>            # CC 素材署名清单
+node server/cli.mjs daily                           # 一条命令跑完 trends→script→create→qc→gate
+```
+
+cron 日更示例：`0 9 * * * cd /app && SV_CLI_EMAIL=... SV_CLI_PASSWORD=... node server/cli.mjs daily >> /var/log/sv-daily.log 2>&1`
 
 ## 7. 数据与备份
 

@@ -1,0 +1,122 @@
+# 短视频工作台 · ① 阶段零成本「定时备份外送」模板
+#
+# 这是模板，不是已启用的 CI。要生效必须复制到仓库根目录 .github/workflows/backup.yml 并推送。
+# 作用：用 GitHub Actions 的免费定时器代替「管理员电脑必须常开跑 crontab」，
+#       每天从托管域拉一次加密全量备份，落到 artifact（免费档 500MB 配额）或外送对象存储。
+#
+# 需要在仓库 Settings → Secrets and variables → Actions 配置：
+#   Secrets:
+#     SV_BASE                https://shortvideo-studio-03074.app.workbuddy.host
+#     SV_GATE_QUERY          sharecode=xxxxxxxx          （自建域名无平台网关时留空字符串）
+#     SV_ADMIN_EMAIL         管理员邮箱
+#     SV_ADMIN_PASSWORD      管理员密码
+#     SV_BACKUP_PASSPHRASE   自定义长口令（AES-256 加密用，务必另存；丢失无法解密）
+#     SV_RCLONE_CONF         可选；rclone.conf 全文（配置了 SV_RCLONE_REMOTE 时才需要）
+#   Variables:
+#     SV_RCLONE_REMOTE       可选；例如 r2:shortvideo-backups / cos:xxx / b2:xxx
+#                            留空 = 只存 GitHub artifact；填写 = 跳过 artifact，直接外送对象存储
+#
+# 首次使用请先手动 workflow_dispatch 跑一次，确认境外 runner 能访问托管域网关。
+# 已知风险：GitHub 对长期无仓库活动的仓库可能停用 schedule，建议每月手动触发一次。
+# UTC 02:23 = 北京时间 10:23；避开整点可减少 GitHub 调度排队。
+
+name: sv-backup-daily
+
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sv-backup-daily
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SV_BASE: ${{ secrets.SV_BASE }}
+      SV_GATE_QUERY: ${{ secrets.SV_GATE_QUERY }}
+      SV_ADMIN_EMAIL: ${{ secrets.SV_ADMIN_EMAIL }}
+      SV_ADMIN_PASSWORD: ${{ secrets.SV_ADMIN_PASSWORD }}
+      SV_BACKUP_PASSPHRASE: ${{ secrets.SV_BACKUP_PASSPHRASE }}
+      SV_BACKUP_LOCAL_DIR: ${{ runner.temp }}/sv-backups
+      SV_BACKUP_KEEP: '1'
+      # GitHub Free 的 artifact 总配额是 500MB（与 Packages 共享），
+      # 默认保留 7 天时单包应 ≤50MB；超过就必须走对象存储或分层备份。
+      SV_MAX_ARTIFACT_MB: '50'
+      SV_RCLONE_REMOTE: ${{ vars.SV_RCLONE_REMOTE }}
+
+    steps:
+      - name: 检出仓库（只为拿到 deploy/free/pull-backup.sh）
+        uses: actions/checkout@v4
+
+      - name: 校验必需凭据
+        run: |
+          set -euo pipefail
+          for k in SV_BASE SV_ADMIN_EMAIL SV_ADMIN_PASSWORD SV_BACKUP_PASSPHRASE; do
+            if [[ -z "${!k:-}" ]]; then
+              echo "::error::缺少 Actions secret：$k"
+              exit 1
+            fi
+          done
+          echo "凭据齐备；外送目标：${SV_RCLONE_REMOTE:-GitHub artifact}"
+
+      - name: 拉取并加密备份
+        run: bash deploy/free/pull-backup.sh
+
+      - name: 校验备份包内容与体积
+        run: |
+          set -euo pipefail
+          f="$(ls -t "$SV_BACKUP_LOCAL_DIR"/sv-backup-* | head -1)"
+          echo "产物：$(basename "$f")"
+          # 解密后必须能看到 SQLite 快照，避免把错误页/HTML 当备份存下来
+          openssl enc -d -aes-256-cbc -pbkdf2 -in "$f" \
+            -out "$RUNNER_TEMP/sv-check.tar.gz" -pass env:SV_BACKUP_PASSPHRASE
+          tar -tzf "$RUNNER_TEMP/sv-check.tar.gz" > "$RUNNER_TEMP/sv-list.txt"
+          grep -q 'studio.sqlite' "$RUNNER_TEMP/sv-list.txt" || {
+            echo "::error::备份包缺少 studio.sqlite"; exit 1; }
+          mb=$(( $(stat -c%s "$f") / 1048576 ))
+          echo "备份包 ${mb} MiB"
+          if [[ -z "$SV_RCLONE_REMOTE" && "$mb" -gt "$SV_MAX_ARTIFACT_MB" ]]; then
+            echo "::error::单包 ${mb} MiB 超过 ${SV_MAX_ARTIFACT_MB} MiB。"
+            echo "::error::GitHub Free 的 artifact 总配额 500MB 会被撑爆；请配置 SV_RCLONE_REMOTE 外送对象存储，或改用分层备份（只存 SQLite + 密钥）。"
+            exit 1
+          fi
+          echo "BACKUP_FILE=$f" >> "$GITHUB_ENV"
+
+      - name: 存为 artifact（仅未配置对象存储时）
+        if: ${{ vars.SV_RCLONE_REMOTE == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sv-backup-${{ github.run_id }}
+          path: ${{ runner.temp }}/sv-backups/sv-backup-*
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: 外送到对象存储（配置 SV_RCLONE_REMOTE 时）
+        if: ${{ vars.SV_RCLONE_REMOTE != '' }}
+        env:
+          SV_RCLONE_CONF: ${{ secrets.SV_RCLONE_CONF }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SV_RCLONE_CONF" ]] || { echo "::error::缺少 secret SV_RCLONE_CONF"; exit 1; }
+          sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s\n' "$SV_RCLONE_CONF" > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          f="$(ls -t "$SV_BACKUP_LOCAL_DIR"/sv-backup-* | head -1)"
+          rclone copyto "$f" "$SV_RCLONE_REMOTE/$(basename "$f")"
+          echo "==> 已外送：$SV_RCLONE_REMOTE/$(basename "$f")"
+          # 远端轮转：只保留最近 7 份，避免对象存储无限膨胀
+          rclone lsf "$SV_RCLONE_REMOTE" --files-only > "$RUNNER_TEMP/remote.txt"
+          grep '^sv-backup-' "$RUNNER_TEMP/remote.txt" > "$RUNNER_TEMP/old.txt" || true
+          sort "$RUNNER_TEMP/old.txt" | head -n -7 \
+            | while IFS= read -r old; do
+                [[ -n "$old" ]] && rclone deletefile "$SV_RCLONE_REMOTE/$old" || true
+              done

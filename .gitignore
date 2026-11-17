@@ -16,3 +16,10 @@ docker-compose.override.yml
 backups/
 deploy/out/
 __pycache__/
+
+# 桌面安装包：构建产物、随包二进制与本机验证数据不入库
+desktop/runtime/
+desktop/staging/
+desktop/.cache/
+desktop/dist/
+desktop/node_modules/
