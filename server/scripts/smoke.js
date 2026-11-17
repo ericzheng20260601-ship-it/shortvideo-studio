@@ -106,9 +106,13 @@ function adminCred() {
   check('提示词 → 分镜 JSON', sb.scenes.length >= 5, `${sb.scenes.length} 镜 / ${sb.duration}s`);
   const batch = await api('POST', '/api/remix/batches', {
     planId: sb.id, name: '冒烟测试批次', projectId: me.defaultProject,
-    hooks: ['反常识', '数字锚点'], subtitles: ['简约白'], bgm: ['轻快'], durations: [15]
+    hooks: ['反常识', '数字锚点'], subtitles: ['简约白'], bgm: ['轻快'], durations: [15],
+    ratios: ['9:16', '1:1'], voice: 'zh-CN', delogo: true
   });
   check('变体矩阵批量任务', batch.total === 2, `${batch.total} 个任务`);
+  check('语言/画幅写入变体', batch.jobs[0].variant.voice === 'zh-CN' && batch.jobs[0].variant.ratios.length === 2,
+    `voice=${batch.jobs[0].variant.voice} ratios=${batch.jobs[0].variant.ratios.join('/')}`);
+  check('去水印写入变体', batch.jobs[0].variant.delogo === true, `delogo=${batch.jobs[0].variant.delogo}`);
   let final = batch, waited = 0;
   while (waited < 120 && (final.counts.done + final.counts.failed + final.counts.blocked) < final.total) {
     await sleep(1000); waited++;
@@ -117,7 +121,7 @@ function adminCred() {
   check('队列推进到完成', final.counts.done === final.total, `done=${final.counts.done} failed=${final.counts.failed} blocked=${final.counts.blocked} 等待 ${waited}s`);
   const job = await api('GET', `/api/remix/jobs/${final.jobs[0].id}`);
   check('TTS 与 SRT', !!job.tts && !!job.srt);
-  check('多画幅导出', job.ratios.length >= 3, job.ratios.join(','));
+  check('多画幅导出', job.ratios.length === 2, job.ratios.join(','));
   check('成片 QC', job.qc && job.qc.checks.length >= 6, `${job.qc?.score} 分 / ${job.qc?.checks?.length} 项`);
   check('AIGC 标识', !!job.package?.aigcLabel?.text);
   check('违禁词检查', Array.isArray(job.package?.bannedWords?.hits));
@@ -130,6 +134,28 @@ function adminCred() {
   check('取消批次', cancelled.status === 'cancelled');
   const resumed = await api('POST', `/api/remix/batches/${batch.id}/resume`, {});
   check('断点续跑接口', !!resumed.id);
+  const expRes = await fetch(BASE + `/api/remix/batches/${batch.id}/export`, { headers: { Authorization: `Bearer ${token}` } });
+  const expBytes = expRes.status === 200 ? (await expRes.arrayBuffer()).byteLength : 0;
+  check('批量导出 tar.gz', expRes.status === 200 && expBytes > 1024, `${expBytes} bytes`);
+  const expForbidden = await fetch(BASE + `/api/remix/batches/${batch.id}/export`);
+  check('导出需登录', expForbidden.status === 401 || expForbidden.status === 403, String(expForbidden.status));
+
+  console.log('\n[4.5] CLI 流水线（借鉴 ClipForge）');
+  const { execFile } = require('node:child_process');
+  const runCli = args => new Promise(resolve => {
+    execFile(process.execPath, [path.join(__dirname, '..', 'cli.mjs'), ...args, '--json'], {
+      env: { ...process.env, SV_CLI_URL: BASE, SV_CLI_EMAIL: cred.email, SV_CLI_PASSWORD: cred.password },
+      timeout: 60000
+    }, (err, stdout) => resolve({ code: err ? err.code : 0, stdout, err: err ? String(err.message).slice(0, 120) : '' }));
+  });
+  const cliStatus = await runCli(['status']);
+  check('CLI status', cliStatus.code === 0 && /version/.test(cliStatus.stdout), cliStatus.code ? cliStatus.err : 'exit 0');
+  const cliBad = await runCli(['qc']);
+  check('CLI 缺参数拦截', cliBad.code === 1, 'exit 1');
+  const cliGate = await runCli(['gate', `--batch=${batch.id}`]);
+  check('CLI gate 闸门', cliGate.code === 0 || cliGate.code === 1 || /pass/.test(cliGate.stdout), `exit ${cliGate.code}`);
+  const cliCredits = await runCli(['credits', `--batch=${batch.id}`]);
+  check('CLI credits 署名清单', cliCredits.code === 0, 'exit 0');
 
   console.log('\n[5] 协作与审计');
   const ov = await api('GET', '/api/collab/overview'); check('协作总览', ov.roles.length === 5);
@@ -145,6 +171,22 @@ function adminCred() {
   const audit = await api('GET', '/api/collab/audit?limit=20'); check('审计日志', audit.items.length >= 5, `${audit.items.length} 条`);
   const cfg = await api('POST', '/api/config', { config: { 'quota.jobsPerDay': 50, 'content.aigcLabel': true } });
   check('服务端配置', cfg.config['quota.jobsPerDay'] === 50);
+
+  console.log('\n[4.6] 爆款雷达 · YouTube 数据源（官方 Key / Invidious 免 Key 双通道）');
+  const ytSt = await api('GET', '/api/radar/youtube/status');
+  check('雷达数据源状态', ytSt.configured === true && ['official', 'invidious'].includes(ytSt.mode), `mode=${ytSt.mode}`);
+  const ytAnon = await fetch(BASE + '/api/radar/youtube?max=5');
+  check('雷达真实数据需登录', ytAnon.status === 401 || ytAnon.status === 403, String(ytAnon.status));
+  const ytRes = await fetch(BASE + '/api/radar/youtube?max=5', { headers: { Authorization: `Bearer ${token}` } });
+  if (ytRes.status === 200) {
+    const yt = await ytRes.json();
+    check('YouTube 真实榜单', Array.isArray(yt.items) && yt.items.length > 0, `${yt.items.length} 条 · ${yt.meta?.mode}`);
+    const one = yt.items[0] || {};
+    check('条目契约（id/url/heat）', /^yt-/.test(one.id || '') && /^https?:/.test(one.url || '') && (one.heat || 0) > 0, `${(one.title || '').slice(0, 24)}`);
+  } else {
+    const j = await ytRes.json().catch(() => ({}));
+    check('出网不可达时明确报错（502+原因）', ytRes.status === 502 && /拉取失败/.test(j.error || ''), `${ytRes.status} · ${(j.error || '').slice(0, 60)}`);
+  }
 
   console.log(`\n=== 结果：${pass} 通过 / ${failed} 失败 ===\n`);
   process.exit(failed ? 1 : 0);

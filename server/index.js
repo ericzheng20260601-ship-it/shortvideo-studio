@@ -10,7 +10,9 @@ const D = require('./modules/discover');
 const B = require('./modules/breakdown');
 const R = require('./modules/remix');
 const C = require('./modules/collab');
+const YR = require('./modules/ytradar');
 const CRON = require('./cron');
+const BK = require('./lib/backup');
 
 const routes = [];
 function route(method, pattern, fn, opts = {}) {
@@ -46,7 +48,7 @@ function streamTo(req, dest, limit = U.MAX_UPLOAD_BYTES) {
 
 /* ---------------- 认证 ---------------- */
 route('GET', '/api/health', () => ({ status: 'ok', version: '2.0.0', time: U.now() }), { public: true });
-route('GET', '/api/status', () => ({ providers: P.providerStatus(), cron: CRON.status(), version: '2.0.0' }), { public: true });
+route('GET', '/api/status', () => ({ providers: P.providerStatus(), render: P.ffmpegInfo(), cron: CRON.status(), version: '2.0.0' }), { public: true });
 route('POST', '/api/auth/login', async (ctx) => {
   const { token, user } = A.login(ctx.body.email, ctx.body.password, ctx.req);
   // 反代场景下按 X-Forwarded-Proto 补 Secure，避免 HTTPS 站点仍下发非安全 Cookie
@@ -69,7 +71,7 @@ route('POST', '/api/auth/password', (ctx) => {
 });
 
 /* ---------------- 配置 ---------------- */
-const SECRET_KEYS = ['data.apiKey', 'llm.apiKey', 'asr.apiKey', 'tts.apiKey', 'push.webhookUrl'];
+const SECRET_KEYS = ['data.apiKey', 'llm.apiKey', 'asr.apiKey', 'tts.apiKey', 'push.webhookUrl', 'radar.youtubeKey'];
 function safeConfig() {
   const all = DB.allConfig();
   for (const k of SECRET_KEYS) if (all[k]) all[k] = '••••••••';
@@ -81,7 +83,7 @@ route('POST', '/api/config', (ctx) => {
   const allow = [...Object.keys(DB.allConfig()), 'discover.syncHour', 'discover.digestHour', 'discover.timezone', 'discover.source', 'discover.categories', 'discover.countries', 'discover.limit',
     'data.apiUrl', 'data.apiKey', 'llm.baseUrl', 'llm.apiKey', 'llm.model', 'asr.apiUrl', 'asr.apiKey', 'tts.apiUrl', 'tts.apiKey', 'tts.voice',
     'push.webhookUrl', 'push.channel', 'quota.jobsPerDay', 'quota.rendersPerDay', 'remix.maxConcurrent', 'remix.ffmpegPath', 'remix.fontPath',
-    'content.aigcLabel', 'content.bannedWords'];
+    'radar.youtubeKey', 'radar.invidiousBase', 'content.aigcLabel', 'content.bannedWords'];
   const patch = ctx.body.config || {};
   for (const [k, v] of Object.entries(patch)) {
     if (!allow.includes(k)) continue;
@@ -90,6 +92,21 @@ route('POST', '/api/config', (ctx) => {
   }
   A.audit(ctx, 'config.update', '', Object.keys(patch).join(','));
   return { config: safeConfig(), providers: P.providerStatus() };
+});
+
+/* ---------------- 备份导出（管理员） ---------------- */
+/* 过渡期托管沙箱里没有 shell / crontab，靠这个接口把完整备份流式取出，
+   再由外部机器定时拉取、加密、转存到不受沙箱生命周期影响的存储。
+   包内含账号摘要、secret.key、上传素材与成片，因此必须管理员权限。 */
+route('GET', '/api/admin/backup', async (ctx) => {
+  A.requireLevel(ctx, 'admin');
+  const { file } = await BK.createBackup({
+    outDir: path.join(U.DATA_DIR, 'backups'),
+    keep: U.int(process.env.SV_BACKUP_KEEP, 7)
+  });
+  A.audit(ctx, 'admin.backup', '', path.basename(file));
+  serveFile(ctx.req, ctx.res, file, { download: true });
+  return undefined; // 响应已由 serveFile 直接写出，跳过 JSON 包装
 });
 
 /* ---------------- 每日发现 ---------------- */
@@ -109,6 +126,20 @@ route('GET', '/api/discover/digests/:id', (ctx) => D.digestDetail(ctx.params.id)
 route('POST', '/api/discover/digest', async (ctx) => { A.requireLevel(ctx, 'editor'); return D.sendDigest(ctx.body.day || U.day(), ctx.body.channel); });
 route('GET', '/api/discover/topics', (ctx) => ({ items: D.topics(ctx) }));
 route('POST', '/api/discover/topics', (ctx) => { A.requireLevel(ctx, 'editor'); return D.createTopic(ctx, ctx.body); });
+
+/* ---------------- 爆款雷达 · YouTube 官方数据源 ---------------- */
+route('GET', '/api/radar/youtube/status', () => ({ configured: YR.isConfigured(), mode: YR.hasKey() ? 'official' : 'invidious' }), { public: true });
+route('GET', '/api/radar/youtube', async (ctx) => {
+  A.requireLevel(ctx, 'viewer');
+  const r = await YR.fetchRadar({
+    track: ctx.query.track || undefined,
+    days: Math.min(U.int(ctx.query.days, 30), 90),
+    max: Math.min(U.int(ctx.query.max, 24), 50),
+    force: U.bool(ctx.query.force),
+  });
+  A.audit(ctx, 'radar.youtube', '', `${r.items.length} 条 · 缓存 ${r.meta.cached}/${r.meta.keywords}`);
+  return r;
+});
 
 /* ---------------- 拆解 ---------------- */
 route('POST', '/api/breakdown/analyze', async (ctx) => { A.requireLevel(ctx, 'editor'); return B.analyze(ctx, ctx.body); });
@@ -156,6 +187,14 @@ route('GET', '/api/remix/batches', (ctx) => ({ items: R.batches(ctx) }));
 route('GET', '/api/remix/batches/:id', (ctx) => R.batch(ctx.params.id));
 route('POST', '/api/remix/batches/:id/cancel', (ctx) => { A.requireLevel(ctx, 'editor'); return R.cancelBatch(ctx, ctx.params.id); });
 route('POST', '/api/remix/batches/:id/resume', (ctx) => { A.requireLevel(ctx, 'editor'); return R.resumeBatch(ctx, ctx.params.id); });
+route('GET', '/api/remix/batches/:id/export', async (ctx) => {
+  A.requireLevel(ctx, 'editor');
+  const { file } = await R.exportBatch(ctx, ctx.params.id);
+  serveFile(ctx.req, ctx.res, file, { download: true });
+  // 临时包延迟清理，给慢速下载留时间
+  const t = setTimeout(() => fs.rmSync(file, { force: true }), 120000); t.unref?.();
+  return undefined; // 响应已由 serveFile 直接写出，跳过 JSON 包装
+});
 route('GET', '/api/remix/jobs/:id', (ctx) => R.jobDetail(ctx.params.id));
 route('POST', '/api/remix/jobs/:id/retry', (ctx) => { A.requireLevel(ctx, 'editor'); return R.retryJob(ctx, ctx.params.id); });
 

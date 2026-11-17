@@ -244,7 +244,7 @@ async function breakdownPanel(el, st) {
           <div class="sv-mini">样本 ${r.voc?.count || 0} 条 · 意图 ${Object.keys(r.voc?.intents || {}).length} 类 · 情感 ${JSON.stringify(r.voc?.sentiment || {})}</div>
           <div class="sv-chips">${(r.voc?.top || []).slice(0, 10).map(w => `<span class="sv-chip">${esc(w.word)} ×${w.count}</span>`).join('') || '暂无高频词'}</div>
           <h4 style="margin-top:12px">反推提示词</h4><pre class="sv-pre">${esc(r.promptReverse || '')}</pre>
-          <button class="btn btn-sm" data-act="to-remix" style="margin-top:8px">送去批量混剪</button></div>
+          <button class="btn btn-sm btn-primary" data-act="to-remix" style="margin-top:8px">送去批量生成（智能成片）</button></div>
       </div>
       <div class="sv-sub" style="margin-top:12px"><h4>脚本判官团 <span class="sv-mini">${r.judge?.autoAdopt ?? 0} 条可自动采纳</span></h4>${judge || '<div class="sv-empty">暂无意见</div>'}
         <div class="sv-form" style="margin-top:10px"><button class="btn btn-sm" data-act="rerun" data-kind="judge">重跑判官</button>
@@ -275,11 +275,11 @@ async function breakdownPanel(el, st) {
     else if (a === 'search') await loadReports();
     else if (a === 'open') { const r = await act(() => get('/api/breakdown/reports/' + t.dataset.id)); if (r) renderReport(r); }
     else if (a === 'rerun' && current) { const r = await act(() => post(`/api/breakdown/reports/${current.id}/rerun`, { kind: t.dataset.kind }), '已重跑'); if (r) renderReport(r); }
-    else if (a === 'to-remix' && current) { sessionStorage.setItem('sv.pendingReport', current.id); location.hash = '#/auto'; }
+    else if (a === 'to-remix' && current) { sessionStorage.setItem('sv.pendingReport', current.id); toast('已送到智能成片', '文案已自动填入提示词，导入视频后即可开始生成'); location.hash = '#/auto'; }
   });
 }
 
-/* ==================== 批量混剪 ==================== */
+/* ==================== 批量混剪（已下线：智能成片页改为一步式流程，见 js/pages/auto.js） ==================== */
 async function remixPanel(el, st) {
   wrap(el, st, 'auto');
   const [c, plans, pendingReport] = await Promise.all([
@@ -294,6 +294,7 @@ async function remixPanel(el, st) {
       <button class="btn btn-sm" data-act="refresh-all">刷新全部</button></div>
     <div class="sv-grid2">
       <div class="sv-sub"><h4>素材四维分级与上传</h4>
+        <div class="sv-note" style="margin-bottom:8px">视频必须在<b>此处</b>上传才会参与混剪：左侧「素材库」的云端文件、下方「智能成片」选的本地视频都不会进入服务端渲染。上传后素材会显示在下表，并自动被批次轮换取用。</div>
         <div class="sv-form"><input type="file" id="svFile" accept="video/*,audio/*,image/*" />
           <select id="svGrade">${(c.grades || []).map(g => `<option value="${esc(g.key)}">${esc(g.label)} · ${esc(g.hint)}</option>`).join('')}</select>
           <button class="btn btn-sm btn-primary" data-act="upload">上传</button></div>
@@ -379,6 +380,11 @@ async function remixPanel(el, st) {
     else if (a === 'batch') {
       const usePlan = planId || val(el, '#svPlanReport');
       if (!usePlan) return toast('请先生成分镜计划，或选择已有计划', '', 'warn');
+      const ar = await get('/api/remix/assets').catch(() => ({ items: [] }));
+      const clips = (ar.items || []).filter(x => x.kind === 'video' && x.hasLocal);
+      if (!clips.length && !window.confirm(
+        '当前没有上传到服务端的视频素材，成片会使用纯色占位画面，不会包含你在「素材库」或下方「智能成片」里选的视频。\n\n' +
+        '要先用真实视频出片，请在本面板「素材四维分级与上传」选择文件并点「上传」。\n\n仍要继续创建批次吗？')) return;
       const body = { planId: usePlan, name: `批次 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`, hooks: selected('hooks'), subtitles: selected('subtitles'), bgm: selected('bgm'), durations: selected('durations') };
       const r = await act(() => post('/api/remix/batches', body), '批次已创建'); if (r) await loadBatches();
     }
@@ -451,6 +457,7 @@ async function collabPanel(el, st) {
 const CFG_FIELDS = [
   ['数据源', [['data.apiUrl', '第三方数据 API URL（无 TikTok 官方权限时必填）'], ['data.apiKey', '数据 API Key'], ['discover.limit', '每次同步条数']]],
   ['AI 能力', [['llm.baseUrl', 'LLM OpenAI 兼容 Base URL'], ['llm.apiKey', 'LLM API Key'], ['llm.model', '模型名'], ['asr.apiUrl', 'ASR 转写接口'], ['asr.apiKey', 'ASR Key'], ['tts.apiUrl', 'TTS 接口'], ['tts.apiKey', 'TTS Key']]],
+  ['爆款雷达', [['radar.youtubeKey', 'YouTube Data API Key（可选；不填则走 Invidious 免 Key 通道）'], ['radar.invidiousBase', '自定义 Invidious 实例域名（可选，默认公共实例池）']]],
   ['调度与推送', [['discover.syncHour', '每日同步小时（0–23）'], ['discover.digestHour', '日报推送小时'], ['discover.timezone', '时区'], ['push.webhookUrl', '企微/飞书/Slack Webhook'], ['push.channel', '推送渠道 wecom/feishu/slack']]],
   ['配额与内容', [['quota.jobsPerDay', '每人每日任务上限'], ['quota.rendersPerDay', '每人每日渲染上限'], ['remix.maxConcurrent', '渲染并发数'], ['content.aigcLabel', 'AIGC 标识（true/false）'], ['content.bannedWords', '违禁词（逗号分隔）']]]
 ];
@@ -477,7 +484,10 @@ async function adminPanel(el, st) {
         <select id="svMRole"><option value="viewer">查看者</option><option value="reviewer">评审员</option><option value="editor" selected>创作者</option><option value="admin">管理员</option></select>
         <button class="btn btn-sm btn-primary" data-act="member-add">添加成员</button></div>
       <div id="svMembers"></div></div>
-    <div class="sv-sub" style="margin-top:12px"><h4>审计日志</h4><div id="svAudit"></div></div>`);
+    <div class="sv-sub" style="margin-top:12px"><h4>审计日志</h4><div id="svAudit"></div></div>
+    <div class="sv-sub" style="margin-top:12px"><h4>备份与迁移（管理员）</h4>
+      <div class="sv-note">完整备份包含数据库、会话密钥、上传素材与成片，请在可信网络下载并加密保存。素材较多时生成需数十秒；建议用 <code>deploy/free/pull-backup.sh</code> 每日自动外送。</div>
+      <div class="sv-form" style="margin-top:8px"><a class="btn btn-sm" href="/api/admin/backup" download>下载完整备份（tar.gz）</a></div></div>`);
   function renderMembers(items) {
     $('#svMembers', el).innerHTML = tbl(['邮箱', '组织 / 项目', '角色', '状态', '操作'], items.map(m => `<tr>
       <td>${esc(m.email)}</td><td>${esc(m.orgName || '')}${m.projectName ? ' / ' + esc(m.projectName) : ''}</td>
@@ -538,7 +548,7 @@ async function adminPanel(el, st) {
 }
 
 /* ==================== 挂载入口 ==================== */
-const PANELS = { home: homePanel, radar: radarPanel, breakdown: breakdownPanel, auto: remixPanel, library: collabPanel, admin: adminPanel };
+const PANELS = { home: homePanel, radar: radarPanel, breakdown: breakdownPanel, library: collabPanel, admin: adminPanel };
 export function mountCloudConsole(page, root) {
   stopConsolePolling();
   activePanel = page;

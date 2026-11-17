@@ -73,6 +73,7 @@ function localStoryboard({ prompt, style, duration, report, product }) {
   }));
   return {
     prompt: U.str(prompt, 2000), style: U.str(style, 60) || '带货口播', duration: d,
+    product: U.str(product, 60) || undefined,
     script: { hook, body: `${pain}。${proof}。`, cta }, scenes,
     constraints: ['不加绝对化用语', '单 CTA', '每段不超过 20 字', '原创 B-roll 占比建议 ≥30%'],
     sourceMode: 'local'
@@ -81,12 +82,16 @@ function localStoryboard({ prompt, style, duration, report, product }) {
 async function plan(ctx, body) {
   const report = body.reportId ? B.report(body.reportId) : null;
   let sb = localStoryboard({ prompt: body.prompt, style: body.style, duration: U.int(body.duration, 30), report, product: body.product });
+  // 字幕/文案语言：跟随前端「配音语言」选择；外部 LLM 模式下让模型直接用该语言写全部文案
+  const lang = U.str(body.lang, 12) || 'zh-CN';
   const llm = await P.chatLLM([
-    { role: 'system', content: '只输出 JSON：{duration:number,script:{hook,body,cta},scenes:[{id,label,start,end,grade,text,camera,needOriginalBroll}],constraints:string[]}。grade 只能是 brand/product/scene/voice。保持镜头总时长等于 duration。' },
+    { role: 'system', content: `只输出 JSON：{duration:number,script:{hook,body,cta},scenes:[{id,label,start,end,grade,text,camera,needOriginalBroll}],constraints:string[]}。grade 只能是 brand/product/scene/voice。保持镜头总时长等于 duration。所有文本字段（script 与 scenes[].text）必须使用语言 ${lang} 书写。` },
     { role: 'user', content: `提示词：${U.str(body.prompt, 2000)}\n时长：${sb.duration} 秒\n参考结构：${U.toJson(report?.structure || [])}` }
   ], { expectJSON: true }).catch(() => null);
   if (llm && Array.isArray(llm.scenes) && llm.scenes.length) {
-    sb = { ...sb, ...llm, prompt: sb.prompt, style: sb.style, duration: U.int(llm.duration, sb.duration), sourceMode: 'llm-external' };
+    sb = { ...sb, ...llm, prompt: sb.prompt, style: sb.style, duration: U.int(llm.duration, sb.duration), lang, sourceMode: 'llm-external' };
+  } else {
+    sb = { ...sb, lang };
   }
   const id = DB.insert('remix_plans', {
     user_id: ctx.user.id, project_id: body.projectId || null, prompt: sb.prompt,
@@ -109,9 +114,16 @@ function matrixOf(body) {
   const subs = Array.isArray(body.subtitles) && body.subtitles.length ? body.subtitles.slice(0, 8) : SUBTITLE_STYLES;
   const bgms = Array.isArray(body.bgm) && body.bgm.length ? body.bgm.slice(0, 8) : BGM_MOODS;
   const durs = Array.isArray(body.durations) && body.durations.length ? body.durations.slice(0, 4).map(d => U.clamp(d, 10, 90)) : [30];
+  // 语言与画幅：全批次统一。画幅缺省渲染全部三种；语言写入 voice 供 TTS / 外部模型使用；delogo 为去水印开关
+  const ratios = Array.isArray(body.ratios) ? body.ratios.filter(r => RATIOS[r]).slice(0, 3) : [];
+  const voice = U.str(body.voice, 40);
+  const delogo = U.bool(body.delogo);
   const out = [];
   for (const h of hooks) for (const s of subs) for (const m of bgms) for (const d of durs) {
-    out.push({ hookKind: U.str(h, 30), subtitleStyle: U.str(s, 30), bgmMood: U.str(m, 30), duration: d });
+    out.push({
+      hookKind: U.str(h, 30), subtitleStyle: U.str(s, 30), bgmMood: U.str(m, 30), duration: d,
+      ...(ratios.length ? { ratios } : {}), ...(voice ? { voice } : {}), ...(delogo ? { delogo: true } : {})
+    });
     if (out.length >= 50) return { variants: out, truncated: true };
   }
   return { variants: out, truncated: false };
@@ -119,14 +131,25 @@ function matrixOf(body) {
 function createBatch(ctx, body) {
   const p = getPlan(body.planId);
   A.need(p, 404, '请先生成分镜计划');
-  const { variants, truncated } = matrixOf(body);
+  let { variants, truncated } = matrixOf(body);
   A.need(variants.length > 0, 400, '变体矩阵为空');
+  // 生产数量：显式指定 count 时把矩阵截断或轮换复制到精确条数，让「数量」成为权威参数（上限仍 50）
+  const count = U.int(body.count, 0);
+  if (count > 0) {
+    A.need(count <= 50, 400, '单次最多 50 条');
+    if (variants.length > count) { variants = variants.slice(0, count); truncated = true; }
+    else if (variants.length < count) {
+      const base = variants.slice(); let i = 0;
+      while (variants.length < count) variants.push({ ...base[i++ % base.length] });
+      truncated = true;
+    }
+  }
   const q = A.quotaCheck(ctx, 'jobs', variants.length);
   A.need(q.allowed, 429, `今日任务配额不足（已用 ${q.used}/${q.limit}）`);
   const id = DB.insert('remix_batches', {
     user_id: ctx.user.id, project_id: body.projectId || null, plan_id: p.id,
     name: U.str(body.name, 120) || `批次 ${U.day()} ${new Date().toTimeString().slice(0, 5)}`,
-    matrix_json: U.toJson({ hooks: body.hooks, subtitles: body.subtitles, bgm: body.bgm, durations: body.durations, truncated }),
+    matrix_json: U.toJson({ hooks: body.hooks, subtitles: body.subtitles, bgm: body.bgm, durations: body.durations, ratios: body.ratios, voice: U.str(body.voice, 40) || undefined, delogo: U.bool(body.delogo) || undefined, count: count || undefined, truncated }),
     total: variants.length, status: 'running', created_at: U.now(), updated_at: U.now()
   });
   variants.forEach((v, i) => DB.insert('remix_jobs', {
@@ -185,6 +208,43 @@ function retryJob(ctx, id) {
 }
 function events(jobId, limit = 50) {
   return DB.all('SELECT ts,stage,message FROM job_events WHERE job_id=? ORDER BY ts DESC LIMIT ?', jobId, U.clamp(limit, 1, 200)).reverse();
+}
+
+/* 批量导出：把批次内全部已完成任务的成片（多画幅 MP4 + SRT + 配音）打成 tar.gz。
+   返回 { file, count }，由路由层负责下发与清理临时包。 */
+async function exportBatch(ctx, id) {
+  const { execFile } = require('node:child_process');
+  const { promisify } = require('node:util');
+  const run = promisify(execFile);
+  const b = DB.get('SELECT * FROM remix_batches WHERE id=?', id);
+  A.need(b, 404, '批次不存在');
+  // 权限：创建者本人，或 admin 及以上
+  A.need(b.user_id === ctx.user.id || A.levelOf(ctx.user) >= A.ROLE_LEVEL.admin, 403, '只能导出自己的批次');
+  const jobs = DB.all(`SELECT * FROM remix_jobs WHERE batch_id=? AND status='done' ORDER BY idx`, id);
+  A.need(jobs.length, 400, '该批次还没有已完成的成片可导出');
+  fs.mkdirSync(U.TMP_DIR, { recursive: true });
+  const work = path.join(U.TMP_DIR, `export-${id}-${process.pid}`);
+  fs.rmSync(work, { recursive: true, force: true });
+  fs.mkdirSync(work, { recursive: true });
+  let packed = 0;
+  try {
+    for (const j of jobs) {
+      const src = path.join(U.OUTPUT_DIR, j.id);
+      if (!fs.existsSync(src)) continue;
+      const v = U.jsonParse(j.variant_json, {});
+      const name = `#${String(j.idx + 1).padStart(2, '0')} ${v.hookKind || ''}·${v.subtitleStyle || ''}·${v.duration || ''}s`.replace(/[\\/:*?"<>|]/g, '-').trim();
+      fs.cpSync(src, path.join(work, name), { recursive: true });
+      packed++;
+    }
+    A.need(packed, 400, '成片文件缺失，无法导出');
+    const file = path.join(U.TMP_DIR, `batch-export-${id}.tar.gz`);
+    fs.rmSync(file, { force: true });
+    await run('tar', ['-czf', file, '-C', work, '.'], { stdio: 'pipe' });
+    A.audit(ctx, 'remix.batch.export', id, `${packed} 个任务`);
+    return { file, count: packed };
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
 }
 function syncBatchCounts(batchId) {
   const c = DB.get(`SELECT
@@ -258,23 +318,108 @@ async function qcOutput(file) {
   checks.push({ name: '规格', ok: fs.existsSync(file) && fs.statSync(file).size > 1024, detail: fs.existsSync(file) ? `${(fs.statSync(file).size / 1024).toFixed(0)} KB` : '文件缺失' });
   return { passed: checks.every(c => c.ok), checks, duration, score: Math.round(checks.filter(c => c.ok).length / checks.length * 100) };
 }
-async function renderOne(job, p, variant, ratioKey, outPath, srtPath, ttsPath) {
+// CC 素材源（借鉴 ClipForge 0-Key 路径）：无本地素材时按关键词从 Wikimedia Commons 搜索 CC 视频，
+// 下载缓存到 data/cc-broll/ 供渲染使用；失败返回 null（渲染回退占位画面）。事件里保留页面标题以便署名。
+const brollCache = new Map();
+async function fetchCCBroll(query) {
+  const q = U.str(query, 120).trim();
+  if (!q) return null;
+  if (brollCache.has(q)) return brollCache.get(q);
+  const dir = path.join(U.DATA_DIR, 'cc-broll');
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    const url = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=8&gsrsearch='
+      + encodeURIComponent(`filetype:video ${q}`) + '&prop=imageinfo&iiprop=url|mime|size&format=json&origin=*';
+    const data = await U.fetchJSON(url, { timeout: 8000 });
+    const pages = Object.values((data.query || {}).pages || {});
+    const vids = pages.map(pg => (pg.imageinfo || [])[0])
+      .filter(i => i && /^video\//.test(i.mime) && i.url && i.size < 60 * 1024 * 1024);
+    if (!vids.length) { brollCache.set(q, null); return null; }
+    const info = vids[Math.floor(Math.random() * Math.min(vids.length, 3))];
+    const key = Buffer.from(info.url).toString('base64url').slice(0, 24);
+    const dest = path.join(dir, key + (path.extname(new URL(info.url).pathname) || '.webm'));
+    if (!fs.existsSync(dest) || fs.statSync(dest).size < 4096) {
+      const resp = await fetch(info.url, { signal: AbortSignal.timeout(60000) });
+      if (!resp.ok) throw new Error(`下载失败 HTTP ${resp.status}`);
+      fs.writeFileSync(dest, Buffer.from(await resp.arrayBuffer()));
+    }
+    if (fs.statSync(dest).size < 4096) throw new Error('下载内容过小');
+    const result = { path: dest, title: U.str(info.url.split('/').pop().replace(/\.[a-z0-9]+$/i, ''), 80) };
+    brollCache.set(q, result);
+    return result;
+  } catch (e) {
+    brollCache.set(q, null);
+    return null;
+  }
+}
+// 用 ffmpeg 自身探测视频分辨率（环境内无 ffprobe）：-i 无输出会非零退出，从 stderr 的 Video 行解析 WxH
+async function probeSize(file) {
+  const parse = s => { const m = String(s || '').match(/Video:.*?(\d{2,5})x(\d{2,5})/); return m ? { w: +m[1], h: +m[2] } : null; };
+  try {
+    const r = await P.runFF(['-hide_banner', '-i', file, '-t', '0.1', '-f', 'null', '-'], { timeout: 30000 });
+    return parse(r.stderr);
+  } catch (e) { return parse(e.message); }
+}
+async function renderOne(job, p, variant, ratioKey, outPath, srtPath, ttsPath, videoAsset) {
   const R = RATIOS[ratioKey];
   const d = U.clamp(variant.duration || p.duration || 30, 5, 90);
   const color = ['0x1D9E75', '0x378ADD', '0xBA7517', '0x993C1D', '0x534AB7'][(job.idx + Object.keys(RATIOS).indexOf(ratioKey)) % 5];
-  const args = ['-y', '-f', 'lavfi', '-i', `color=c=${color}:s=${R.w}x${R.h}:r=25:d=${d}`, '-i', ttsPath];
+  const enc = P.videoEncoder();
+  // 有本地视频素材时以它为画面主体，循环补到目标时长；否则退回纯色占位。
+  const clip = videoAsset && videoAsset.local_path && fs.existsSync(videoAsset.local_path) ? videoAsset.local_path : '';
   const font = fontPath();
-  if (font && fs.existsSync(srtPath)) {
-    const esc = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
-    args.push('-vf', `subtitles=filename='${esc}':force_style='FontName=Noto Sans CJK SC,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'`);
+  const srtEsc = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+  // 字幕样式：底部居中、留出下边距避免贴边出界，两侧留白防溢出；字号缩小减少遮挡主体
+  const subFilter = font && fs.existsSync(srtPath)
+    ? `,subtitles=filename='${srtEsc}':force_style='FontName=Noto Sans CJK SC,FontSize=17,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1,Shadow=0,Alignment=2,MarginL=24,MarginR=24,MarginV=32'`
+    : '';
+  // 去水印：对源片三个常见角标区域（左上 @用户名 / 右上 / 右下 logo）做 delogo 消除。
+  // ffmpeg 6 的 delogo 不支持表达式，先用 ffmpeg 探测源片分辨率，再按比例换算像素坐标并夹取在合法范围内。
+  const useDelogo = !!variant.delogo;
+  let delogoVF = '';
+  if (useDelogo && clip) {
+    const sz = await probeSize(clip);
+    if (sz && sz.w > 40 && sz.h > 40) {
+      const rects = [
+        [0.02, 0.04, 0.34, 0.09], // 左上（TikTok @用户名）
+        [0.63, 0.04, 0.34, 0.09], // 右上（部分平台角标）
+        [0.60, 0.84, 0.37, 0.12]  // 右下（抖音 logo）
+      ].map(([rx, ry, rw, rh]) => {
+        const x = Math.max(1, Math.round(sz.w * rx)), y = Math.max(1, Math.round(sz.h * ry));
+        const w = Math.min(sz.w - x - 1, Math.round(sz.w * rw)), h = Math.min(sz.h - y - 1, Math.round(sz.h * rh));
+        return w > 8 && h > 8 ? `delogo=x=${x}:y=${y}:w=${w}:h=${h}` : '';
+      }).filter(Boolean).join(',');
+      if (rects) { delogoVF = rects + ','; event(job.id, '渲染', `已启用去水印：源片 ${sz.w}x${sz.h}，对左上/右上/右下角标区域做模糊消除`); }
+      else event(job.id, '渲染', '去水印已请求但源片分辨率过小，已跳过');
+    } else event(job.id, '渲染', '去水印已请求但源片分辨率探测失败，已跳过（渲染继续）');
   }
-  args.push('-t', String(d), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '96k', '-shortest', '-movflags', '+faststart', outPath);
-  try { await P.runFF(args, { timeout: 180000 }); }
-  catch (e) {
-    if (!String(e.message).includes('subtitles')) throw e;
-    const plain = args.filter((a, i) => !(a === '-vf' || (i > 0 && args[i - 1] === '-vf')));
-    await P.runFF(plain, { timeout: 180000 });
+  const build = (useClip, useSub, useDl) => {
+    const inputs = useClip
+      ? ['-stream_loop', '-1', '-i', clip]
+      : ['-f', 'lavfi', '-i', `color=c=${color}:s=${R.w}x${R.h}:r=25:d=${d}`];
+    const baseVF = useClip
+      ? `scale=${R.w}:${R.h}:force_original_aspect_ratio=decrease,pad=${R.w}:${R.h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25`
+      : `scale=${R.w}:${R.h},setsar=1,fps=25`;
+    return ['-y', ...inputs, '-i', ttsPath,
+      '-vf', (useDl && useClip ? delogoVF : '') + baseVF + (useSub ? subFilter : ''),
+      '-map', '0:v:0', '-map', '1:a:0',
+      '-af', 'apad', '-t', String(d),
+      ...enc.args, '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', outPath];
+  };
+  // 降级顺序：素材+字幕+去水印 → 素材+字幕 → 素材无字幕 → 占位+字幕 → 占位无字幕。
+  // 只对字幕 / 去水印滤镜 / 素材流不可解这类可恢复错误降级，其余错误立即抛出，避免掩盖真因。
+  const attempts = [build(!!clip, !!subFilter, useDelogo)];
+  if (useDelogo && clip) attempts.push(build(true, !!subFilter, false));
+  if (subFilter) attempts.push(build(!!clip, false, false));
+  if (clip) attempts.push(build(false, !!subFilter, false), build(false, false, false));
+  for (let i = 0; i < attempts.length; i++) {
+    try { await P.runFF(attempts[i], { timeout: 180000 }); return; }
+    catch (e) {
+      const recoverable = /subtitles|delogo|fontconfig|font|Stream map|does not contain any stream|Invalid data|Invalid argument|Error opening input|moov atom/i.test(String(e.message));
+      if (!recoverable || i === attempts.length - 1) throw e;
+      event(job.id, '渲染', `第 ${i + 1} 次渲染因素材/字幕/去水印不兼容降级：${String(e.message).slice(0, 120)}`);
+    }
   }
 }
 async function processJob(jobId) {
@@ -292,10 +437,23 @@ async function processJob(jobId) {
   try {
     setJob(job, { status: 'running', stage: '准备素材', progress: 12 });
     const pool = assets({}).filter(a => a.kind === 'video' && a.hasLocal);
-    if (pool.length) event(job.id, '素材', `可用本地素材 ${pool.length} 个，按 ${[...new Set(scenes.map(s => s.grade))].join('/')} 分级取用`);
-    else event(job.id, '素材', '暂无自有视频素材，使用占位画面渲染（上传素材后自动替换）');
+    // 按任务序号轮换素材：同一批次的不同变体用不同源片，才叫「批量混剪」。
+    let clipAsset = pool.length ? pool[U.int(job.idx, 0) % pool.length] : null;
+    if (clipAsset) event(job.id, '素材', `可用本地素材 ${pool.length} 个，本条使用「${clipAsset.title || clipAsset.file_name}」；分镜分级 ${[...new Set(scenes.map(s => s.grade))].join('/')}`);
+    // 无本地素材时回退 CC 素材源（Wikimedia Commons，免 Key），仍无结果才用占位画面
+    if (!clipAsset) {
+      const kw = U.str(p.product || p.prompt || '', 60).trim();
+      const broll = kw ? await fetchCCBroll(kw) : null;
+      if (broll) {
+        clipAsset = { local_path: broll.path, title: 'CC: ' + broll.title };
+        event(job.id, '素材', `无本地素材，改用 CC 素材源（Wikimedia Commons）「${broll.title}」——成片如商用请在发布处保留该署名`);
+      } else event(job.id, '素材', '暂无本地视频且 CC 素材源无结果，使用占位画面渲染（可在素材面板上传视频）');
+    }
 
-    if (!fs.existsSync(ttsPath)) { await P.synthTTS(scenes.map(s => s.text).join('。'), ttsPath, variant.voice); }
+    if (!fs.existsSync(ttsPath)) {
+      const src = await P.synthTTS(scenes.map(s => s.text).join('。'), ttsPath, variant.voice);
+      event(job.id, '配音', `TTS 来源：${src.startsWith('edge-tts') ? 'Edge TTS 真实配音（' + src.split(':')[1] + '）' : src}`);
+    }
     fs.writeFileSync(srtPath, makeSRT(scenes, variant), 'utf8');
     setJob(job, { stage: 'TTS 与 SRT', progress: 30, tts_path: ttsPath, srt_path: srtPath });
 
@@ -317,7 +475,7 @@ async function processJob(jobId) {
     for (const ratio of ratios) {
       if (!RATIOS[ratio]) continue;
       const out = path.join(dir, `output_${ratio.replace(':', 'x')}.mp4`);
-      if (!fs.existsSync(out) || fs.statSync(out).size < 1024) await renderOne(job, p, variant, ratio, out, srtPath, ttsPath);
+      if (!fs.existsSync(out) || fs.statSync(out).size < 1024) await renderOne(job, p, variant, ratio, out, srtPath, ttsPath, clipAsset);
       outputs[ratio] = out;
       idx++;
       setJob(job, { stage: `渲染 ${ratio}`, progress: 30 + Math.round(idx / ratios.length * 45) });
@@ -361,6 +519,6 @@ function jobDetail(id) {
 module.exports = {
   GRADES, HOOK_KINDS, SUBTITLE_STYLES, BGM_MOODS, RATIOS,
   assets, addAsset, gradeAsset, plan, plans, getPlan, matrixOf, createBatch, batch, batches,
-  cancelBatch, resumeBatch, retryJob, events, jobDetail, nextQueued, processJob, syncBatchCounts,
+  cancelBatch, resumeBatch, retryJob, events, jobDetail, nextQueued, processJob, syncBatchCounts, exportBatch,
   makeSRT, bannedScan, buildPackage, qcOutput
 };

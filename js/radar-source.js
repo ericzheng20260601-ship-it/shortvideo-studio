@@ -25,7 +25,69 @@ export const SOURCE_CONTRACT = [
 
 const CFG_KEY = 'sv.radar.endpoint';
 const ITEMS_KEY = 'sv.radar.items';
+const USER_KEY = 'sv.radar.userItems';
 const VALID_TRACKS = new Set(TRACKS.map(t => t.id));
+
+/* ---------- 手动添加视频链接 ----------
+   合规路径：用户人工粘贴公开视频页链接（TikTok / YouTube），只存链接与 oEmbed 官方元数据，
+   不抓取榜单、不转存视频文件。播放走页内官方内嵌播放器。 */
+export const videoIdOf = url => {
+  const s = String(url || '');
+  const tt = s.match(/tiktok\.com\/(?:@[\w.\-]+)\/video\/(\d{6,})/);
+  if (tt) return 'tt-' + tt[1];
+  const yt = s.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([\w-]{6,})/);
+  if (yt) return 'yt-' + yt[1];
+  return '';
+};
+
+export function userItems() {
+  try {
+    const a = JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+    return Array.isArray(a) ? a : [];
+  } catch (_) { return []; }
+}
+const saveUserItems = a => localStorage.setItem(USER_KEY, JSON.stringify(a.slice(0, 100)));
+export const removeUserVideo = id => saveUserItems(userItems().filter(x => x.id !== id));
+
+export function addUserVideo(url, { title, author, track, cover } = {}) {
+  const u = String(url || '').trim();
+  if (!/^https?:\/\//i.test(u)) return { ok: false, error: '链接格式不正确，需 http(s):// 开头' };
+  const vid = videoIdOf(u);
+  if (!vid) return { ok: false, error: '暂只支持 TikTok / YouTube 标准视频页链接（TikTok 需形如 @用户/video/数字，不支持 vm.tiktok.com 短链）' };
+  const items = userItems();
+  if (items.some(x => x.id === 'user-' + vid)) return { ok: false, error: '该视频已在雷达列表中' };
+  const tr = VALID_TRACKS.has(track) ? track : 'knowledge';
+  const item = {
+    id: 'user-' + vid,
+    title: String(title || '来自链接的视频').slice(0, 120),
+    author: String(author || '手动添加').slice(0, 60),
+    track: tr,
+    dur: '0:30', views: 0, saves: 0, heat: 60,
+    hook: '结构待补充：点「拆解」由本地规则引擎生成',
+    pain: '结构待补充', proof: '结构待补充', cta: '结构待补充',
+    product: '未标注', tags: ['手动添加'], ai: false, ad: false,
+    emoji: trackOf(tr).emoji,
+    sourceUrl: u, coverUrl: String(cover || ''),
+    _live: true, _user: true, _missing: ['views', 'saves', 'hook', 'pain', 'proof', 'cta'],
+  };
+  items.unshift(item);
+  saveUserItems(items);
+  return { ok: true, item };
+}
+
+/** 尝试用平台官方 oEmbed 补充标题/作者/封面（免费、合规）；失败不影响添加。 */
+export async function fetchOEmbed(url) {
+  const u = String(url || '');
+  const api = /youtube\.com|youtu\.be/i.test(u)
+    ? 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(u)
+    : 'https://www.tiktok.com/oembed?url=' + encodeURIComponent(u);
+  try {
+    const r = await fetch(api, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return { title: d.title, author: d.author_name, cover: d.thumbnail_url };
+  } catch (_) { return null; }
+}
 
 export const getEndpoint = () => (window.SV_RADAR_ENDPOINT || localStorage.getItem(CFG_KEY) || '').trim();
 export function setEndpoint(url) {
@@ -91,30 +153,56 @@ export function normalizeTrend(raw = {}, i = 0) {
 }
 
 /**
- * 读取榜单：无 endpoint → 演示数据；有 endpoint → 拉取并归一化，失败回退缓存/演示数据。
- * 返回 { mode, items, note, error }，mode ∈ demo | live | live-cache | fallback。
+ * 读取榜单，优先级：自定义 endpoint → YouTube 官方 API（服务端已配 Key 时）→ 演示数据。
+ * 返回 { mode, items, note, error }，mode ∈ demo | live | yt-live | yt-cache | live-cache | fallback。
  */
 export async function loadRadar({ force = false } = {}) {
   const endpoint = getEndpoint();
-  const cached = cachedItems();
-  if (!endpoint) return { mode: 'demo', items: RADAR, note: '演示数据 · 结构化样例，未接入外部数据源', error: null };
-  if (cached && !force) return { mode: 'live-cache', items: cached, note: '已配置数据源 · 使用上次成功拉取的缓存', error: null };
+  const users = userItems();
+  const merge = (items, note) => ({
+    items: users.length ? [...users, ...items] : items,
+    note: users.length ? `${note} · 含手动添加 ${users.length} 条` : note,
+  });
+  if (!endpoint) {
+    try {
+      const yt = await fetchYtLive(force);
+      if (yt) {
+        const norm = yt.items.slice(0, 60).map(normalizeTrend);
+        const { items, note } = merge(norm, yt.note);
+        return { mode: yt.mode, items, note, error: null };
+      }
+    } catch (e) {
+      const cached = ytCached();
+      if (cached) {
+        const norm = cached.items.slice(0, 60).map(normalizeTrend);
+        const { items, note } = merge(norm, 'YouTube 数据源异常 · 回退到本地缓存');
+        return { mode: 'yt-cache', items, note, error: e?.message || '请求失败' };
+      }
+      // 无缓存：继续走演示数据，把错误带上
+      const { items, note } = merge(RADAR, `YouTube 数据源暂时不可用 · 显示演示数据（${e?.message || '请求失败'}）`);
+      return { mode: 'fallback', items, note, error: e?.message || '请求失败' };
+    }
+    const { items, note } = merge(RADAR, '演示数据 · 结构化样例（运行环境可访问 YouTube 时自动拉取真实数据）');
+    return { mode: 'demo', items, note, error: null };
+  }
+  if (cachedItems() && !force) {
+    const { items, note } = merge(cachedItems(), '已配置数据源 · 使用上次成功拉取的缓存');
+    return { mode: 'live-cache', items, note, error: null };
+  }
   try {
     const res = await fetch(endpoint, { headers: { Accept: 'application/json' }, credentials: 'omit' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     const arr = Array.isArray(json) ? json : (Array.isArray(json.items) ? json.items : null);
     if (!arr || !arr.length) throw new Error('响应中没有视频条目数组');
-    const items = arr.slice(0, 60).map(normalizeTrend);
-    localStorage.setItem(ITEMS_KEY, JSON.stringify(items));
-    return { mode: 'live', items, note: `已接入数据源 · 本次拉取 ${items.length} 条`, error: null };
+    const norm = arr.slice(0, 60).map(normalizeTrend);
+    localStorage.setItem(ITEMS_KEY, JSON.stringify(norm));
+    const { items, note } = merge(norm, `已接入数据源 · 本次拉取 ${norm.length} 条`);
+    return { mode: 'live', items, note, error: null };
   } catch (e) {
-    return {
-      mode: 'fallback',
-      items: cached || RADAR,
-      note: cached ? '数据源暂时不可用 · 回退到上次缓存' : '数据源暂时不可用 · 回退到演示数据',
-      error: e?.message || '请求失败',
-    };
+    const cached = cachedItems();
+    const { items, note } = merge(cached || RADAR, cached ? '数据源暂时不可用 · 回退到上次缓存' : '数据源暂时不可用 · 回退到演示数据');
+    return { mode: 'fallback', items, note, error: e?.message || '请求失败' };
   }
 }
 
@@ -127,6 +215,52 @@ export function applyRadarItems(items) {
 export const SOURCE_LABEL = {
   demo: ['演示数据 · 结构化样例', 'amber'],
   live: ['已接入授权数据源', ''],
+  'yt-live': ['YouTube · 真实数据', ''],
+  'yt-cache': ['YouTube · 缓存', 'blue'],
   'live-cache': ['授权数据源 · 缓存', 'blue'],
   fallback: ['数据源不可用 · 已回退', 'rose'],
 };
+
+/* ---------- YouTube 真实数据源（服务端代理 /api/radar/youtube）----------
+   服务端双通道：配了 radar.youtubeKey 走官方 API；没配则走开源 Invidious 公共实例（免 Key）。
+   Key 存服务端配置，前端不接触。服务端缓存 6h，前端本地缓存 30 分钟；
+   失败（含出网不可达）一律回退演示数据并在徽标/提示中标注原因。 */
+const YT_CACHE_KEY = 'sv.radar.ytItems';
+const YT_TS_KEY = 'sv.radar.ytTs';
+const YT_LOCAL_TTL = 30 * 60 * 1000;
+
+function ytCached() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(YT_CACHE_KEY) || 'null');
+    const ts = Number(localStorage.getItem(YT_TS_KEY) || 0);
+    return Array.isArray(arr) && arr.length && Date.now() - ts < YT_LOCAL_TTL ? { items: arr, age: Date.now() - ts } : null;
+  } catch (_) { return null; }
+}
+function saveYtCache(items) {
+  localStorage.setItem(YT_CACHE_KEY, JSON.stringify(items));
+  localStorage.setItem(YT_TS_KEY, String(Date.now()));
+}
+export function clearYtCache() { localStorage.removeItem(YT_CACHE_KEY); localStorage.removeItem(YT_TS_KEY); }
+
+async function fetchYtLive(force) {
+  let st;
+  try {
+    st = await fetch('/api/radar/youtube/status', { signal: AbortSignal.timeout(5000) });
+  } catch (_) { return null; } // 服务端不在或离线
+  if (!st.ok) return null;
+  const j = await st.json().catch(() => null);
+  if (!j?.configured) return null; // 管理员未配 Key，静默走演示数据
+  const cached = ytCached();
+  if (cached && !force) return { items: cached.items, note: 'YouTube 官方 API · 6h 内缓存', mode: 'yt-cache' };
+  const res = await fetch(`/api/radar/youtube?max=36${force ? '&force=1' : ''}`, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  const jj = await res.json();
+  const arr = Array.isArray(jj.items) ? jj.items : [];
+  if (!arr.length) throw new Error('YouTube 返回 0 条');
+  saveYtCache(arr);
+  const modeTxt = jj.meta?.mode === 'official' ? '官方 API' : 'Invidious（免 Key）';
+  return { items: arr, note: `YouTube 真实数据 · ${modeTxt} · ${arr.length} 条${jj.meta?.cached ? `（${jj.meta.cached}/${jj.meta.keywords} 赛道走缓存）` : ''}`, mode: 'yt-live' };
+}

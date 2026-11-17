@@ -307,9 +307,9 @@ a{color:inherit;text-decoration:none}
 .clip-inspector{background:var(--surface-soft);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:12px;animation:fadeUp .25s ease both}
 
 /* ============ 智能成片 ============ */
-.dropzone{border:2px dashed var(--teal-line);border-radius:18px;background:linear-gradient(150deg,#f8fcfb,#eef7f5);min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;cursor:pointer;transition:.22s;text-align:center;padding:22px}
+.dropzone{border:2px dashed var(--teal-line);border-radius:14px;background:linear-gradient(150deg,#f8fcfb,#eef7f5);min-height:104px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;cursor:pointer;transition:.22s;text-align:center;padding:12px}
 .dropzone:hover,.dropzone.drag{border-color:var(--teal);background:var(--teal-soft);transform:translateY(-2px)}
-.dropzone svg{width:34px;height:34px;color:var(--teal)}
+.dropzone svg{width:24px;height:24px;color:var(--teal)}
 .dropzone b{font-size:13.5px}
 .dropzone span{font-size:11.5px;color:var(--ink-3)}
 .file-pill{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--teal-line);border-radius:12px;padding:11px 13px;margin-top:12px}

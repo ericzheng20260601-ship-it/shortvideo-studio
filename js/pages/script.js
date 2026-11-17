@@ -102,6 +102,7 @@ export default {
           <button class="btn btn-soft" id="btnCopyAll">${icon('copy',13)} 复制全文</button>
           <button class="btn" id="btnSaveScript">${icon('save',13)} 存素材库</button>
           <button class="btn" id="btnExportTxt">${icon('download',13)} 导出 TXT</button>
+          <button class="btn btn-soft" id="btnToAuto">${icon('ai',13)} 送去智能成片</button>
           <button class="btn btn-primary" id="btnToEditor">${icon('scissors',13)} 一键送去剪辑</button>
         </div>
         <div class="field-hint" style="margin-top:9px">字数按时长比例建议值估算；约 4 字/秒，可按实际语速微调。</div>
@@ -123,6 +124,12 @@ export default {
         toast('已存入素材库','文案同时计入首页统计');
       };
       $$('[data-copyseg]', root).forEach(b => b.onclick = () => copyText([d.hook,d.body,d.cta][Number(b.dataset.copyseg)], '本段文案'));
+      $('#btnToAuto', root).onclick = () => {
+        const text = [d.hook, d.body, d.cta].filter(Boolean).join('\n');
+        sessionStorage.setItem('sv.pendingPrompt', text);
+        toast('已送到智能成片', '口播文案已自动填入提示词，导入视频后即可开始生成');
+        location.hash = '#/auto';
+      };
       $('#btnToEditor', root).onclick = () => {
         const sid = store.uid('s');
         store.add('scripts', { id:sid, title:d.topic, track:d.opts.track, audience:d.opts.audience, style:d.opts.style, duration:d.dur.v,

@@ -11,11 +11,13 @@ const CJSON = (k, fallback) => { const v = C(k); return typeof v === 'string' ? 
 /* ---------- 外部能力：全部可插拔，未配置时走本地降级 ---------- */
 
 function providerStatus() {
+  let ttsState = 'placeholder';
+  try { require('node-edge-tts'); ttsState = 'edge-tts'; } catch { /* 包未安装 */ }
   return {
     data: C('data.apiUrl') ? 'external' : 'demo',
     llm: C('llm.baseUrl') && C('llm.apiKey') ? 'external' : 'local',
     asr: C('asr.apiUrl') ? 'external' : 'local',
-    tts: C('tts.apiUrl') ? 'external' : 'placeholder',
+    tts: C('tts.apiUrl') ? 'external' : ttsState,
     push: C('push.webhookUrl') ? 'webhook' : 'inbox',
     render: ffmpegBin() ? 'ffmpeg' : 'missing'
   };
@@ -166,7 +168,14 @@ function parseSRT(srt) {
   return out;
 }
 
-/* TTS：外部 HTTP 返回音频 URL/Base64；未配置时用 ffmpeg 生成占位静音轨 */
+/* TTS 三级降级：外部 HTTP API → 微软 Edge TTS（免 Key，借鉴 ClipForge 0-Key 路径）→ ffmpeg 静音占位 */
+const EDGE_VOICES = {
+  'zh-CN': 'zh-CN-XiaoxiaoNeural', 'zh-HK': 'zh-HK-HiuMaanNeural',
+  'en-US': 'en-US-AriaNeural', 'de-DE': 'de-DE-KatjaNeural', 'pt-BR': 'pt-BR-FranciscaNeural',
+  'ja-JP': 'ja-JP-NanamiNeural', 'ko-KR': 'ko-KR-SunHiNeural',
+  'es-ES': 'es-ES-ElviraNeural', 'fr-FR': 'fr-FR-DeniseNeural'
+};
+let edgeTTSMod = null;
 async function synthTTS(text, outPath, voice) {
   const url = U.str(C('tts.apiUrl'));
   if (url) {
@@ -177,6 +186,14 @@ async function synthTTS(text, outPath, voice) {
       fs.writeFileSync(outPath, buf); return 'external';
     }
   }
+  // Edge TTS：voice 传语言码（en-US）或完整 Neural 名均支持；网络不可用/服务变更时静默降级
+  const v = /Neural$/i.test(String(voice || '')) ? String(voice) : (EDGE_VOICES[String(voice || '').trim()] || EDGE_VOICES['zh-CN']);
+  try {
+    if (!edgeTTSMod) edgeTTSMod = require('node-edge-tts');
+    const tts = new edgeTTSMod.EdgeTTS({ voice: v });
+    await tts.ttsPromise(String(text).slice(0, 4000), outPath);
+    if (fs.existsSync(outPath) && fs.statSync(outPath).size > 512) return `edge-tts:${v}`;
+  } catch (e) { /* 降级到占位 */ }
   const ff = ffmpegBin();
   if (!ff) return 'none';
   const dur = U.clamp(String(text).length / 5, 2, 60).toFixed(1);
@@ -199,20 +216,68 @@ async function sendPush(channel, payload) {
 
 /* ffmpeg */
 let ffCache;
+let ffSource = '';
+function staticFF() {
+  try { const p = require('ffmpeg-static'); if (p && fs.existsSync(p)) return p; } catch { /* 未安装 */ }
+  return '';
+}
 function ffmpegBin() {
   if (ffCache !== undefined) return ffCache;
-  const cands = [U.str(C('remix.ffmpegPath')), process.env.FFMPEG_PATH, process.env.SV_FFMPEG_PATH, 'ffmpeg'];
-  for (const c of cands) {
+  // ① 显式配置优先：自有服务器可能指定带 GPU / 特定编码器的构建
+  const explicit = [U.str(C('remix.ffmpegPath')), process.env.FFMPEG_PATH, process.env.SV_FFMPEG_PATH];
+  for (const c of explicit) {
     if (!c) continue;
-    if (c.includes(path.sep)) { if (fs.existsSync(c)) { ffCache = c; return ffCache; } continue; }
-    try { execFileSyncQuick(c, ['-version']); ffCache = c; return ffCache; } catch { /* next */ }
+    if (c.includes(path.sep)) { if (fs.existsSync(c)) { ffCache = c; ffSource = 'configured'; return ffCache; } continue; }
+    try { execFileSyncQuick(c, ['-version']); ffCache = c; ffSource = 'configured'; return ffCache; } catch { /* next */ }
   }
-  try { const p = require('ffmpeg-static'); if (p && fs.existsSync(p)) { ffCache = p; return ffCache; } } catch { /* no dev dep */ }
-  ffCache = null; return null;
+  // ② 随 npm 依赖安装的完整构建（自带 libx264）。系统 ffmpeg 常被裁剪，只留解码器，
+  //    放在系统 PATH 之后会命中「有二进制但无编码器」的坑，导致 Unknown encoder 'libx264'。
+  const st = staticFF();
+  if (st) { ffCache = st; ffSource = 'ffmpeg-static'; return ffCache; }
+  // ③ 最后才退回系统 PATH
+  try { execFileSyncQuick('ffmpeg', ['-version']); ffCache = 'ffmpeg'; ffSource = 'system'; return ffCache; } catch { /* next */ }
+  ffCache = null; ffSource = ''; return null;
 }
 function execFileSyncQuick(bin, args) {
   const { execFileSync } = require('node:child_process');
   return execFileSync(bin, args, { stdio: 'ignore', timeout: 5000 });
+}
+
+let encCache;
+function ffmpegEncoders() {
+  if (encCache) return encCache;
+  const bin = ffmpegBin();
+  if (!bin) { encCache = new Set(); return encCache; }
+  try {
+    const { execFileSync } = require('node:child_process');
+    const out = execFileSync(bin, ['-hide_banner', '-encoders'],
+      { encoding: 'utf8', timeout: 8000, maxBuffer: 4 * 1024 * 1024 });
+    encCache = new Set(out.split('\n')
+      .map(l => (l.match(/^\s*[A-Z.]{6}\s+(\S+)/) || [])[1])
+      .filter(Boolean));
+  } catch { encCache = new Set(); }
+  return encCache;
+}
+/* 视频编码器按可用性自适应，避免把 libx264 写死。
+   SV_FORCE_VIDEO_ENCODER=libx264|libopenh264|mpeg4 可强制指定，便于运维与回归测试。 */
+const ENCODER_CHAIN = [
+  { name: 'libx264', args: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26'] },
+  { name: 'libopenh264', args: ['-c:v', 'libopenh264', '-b:v', '2500k'] },
+  { name: 'mpeg4', args: ['-c:v', 'mpeg4', '-q:v', '4'] }
+];
+function videoEncoder() {
+  const forced = U.str(process.env.SV_FORCE_VIDEO_ENCODER);
+  if (forced) {
+    const f = ENCODER_CHAIN.find(x => x.name === forced);
+    if (f) return f;
+  }
+  const enc = ffmpegEncoders();
+  return ENCODER_CHAIN.find(x => enc.has(x.name)) || ENCODER_CHAIN[0];
+}
+function ffmpegInfo() {
+  const e = videoEncoder();
+  return { source: ffmpegBin() ? ffSource : null, encoder: e.name,
+    hasX264: ffmpegEncoders().has('libx264'), encoders: ENCODER_CHAIN.filter(x => ffmpegEncoders().has(x.name)).map(x => x.name) };
 }
 const ffChildren = new Set();
 function runFF(args, { timeout = 300000, maxBuffer = 12 * 1024 * 1024 } = {}) {
@@ -234,5 +299,6 @@ function stopFF() { for (const c of ffChildren) { try { c.kill('SIGKILL'); } cat
 module.exports = {
   C, CJSON, providerStatus, chatLLM, fetchRadarItems, demoItems, normalizeExternalItem,
   transcribe, parseSRT, synthTTS, sendPush, ffmpegBin, runFF, stopFF,
+  videoEncoder, ffmpegInfo, ffmpegEncoders,
   HOOKS, PAINS, PROOFS, CTAS, PRODUCTS, CATEGORIES, COUNTRIES
 };

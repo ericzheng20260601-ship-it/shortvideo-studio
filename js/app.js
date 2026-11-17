@@ -25,7 +25,7 @@ const NAV = [
   { id:'breakdown', label:'AI 文案拆解',  ico:'ai',       page:breakdown,  sub:'把别人的爆款拆成可复用结构', stage:2 },
   { id:'script',    label:'口播文案工坊', ico:'file',     page:script,     sub:'选一选、填一填，出分段稿', stage:3 },
   { id:'editor',    label:'在线剪辑台',   ico:'scissors', page:editor,    sub:'四轨时间线，工程自动保存', stage:4 },
-  { id:'auto',      label:'智能成片',     ico:'wand',     page:auto,       sub:'上传视频，六步跑完工程包', stage:5 },
+  { id:'auto',      label:'智能成片',     ico:'wand',     page:auto,       sub:'导入视频 · 填提示词 · 一键生成真实视频', stage:5 },
   { id:'review',    label:'成品评估',     ico:'chart',    page:review,     sub:'打分、自检、一键分发', stage:6 },
   { id:'library',   label:'素材库',       ico:'folder',   page:library,    sub:'文案、拆解、工程统一收纳', stage:0 },
   { id:'admin',     label:'管理后台',     ico:'shield',   page:admin,      sub:'访问授权、名单与数据快照', stage:0, adminOnly:true },

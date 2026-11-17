@@ -41,7 +41,7 @@ export const quoteIndexByDate = (d = new Date()) => {
 };
 
 export const RADAR = [
-  { id:'r1', track:'pet-chew', title:'狗狗拆家停不下来？一根磨牙棒让它安静 40 分钟', author:'@paws.daily', dur:'00:28', views:8200000, saves:123800, heat:96, emoji:'🦷', tags:['磨牙','拆家救星'], ai:false, ad:false,
+  { id:'r1', track:'pet-chew', title:'狗狗拆家停不下来？一根磨牙棒让它安静 40 分钟', author:'@paws.daily', dur:'00:28', views:8200000, saves:123800, heat:96, emoji:'🦷', tags:['磨牙','拆家救星'], ai:false, ad:false, url:'/demo-samples/demo-sample-9x16.mp4',
     product:'天然鹿角磨牙棒', hook:'你家狗是不是一转身就把沙发咬了？', pain:'拆家、焦虑、乱咬', proof:'连续 7 天实测 + 前后对比', cta:'评论区扣 1 领取尺寸对照表' },
   { id:'r2', track:'skincare', title:'30 岁以后才明白：早 C 晚 A 根本不用那么复杂', author:'@skin.notes', dur:'01:14', views:4600000, saves:89900, heat:93, emoji:'🧴', tags:['早C晚A','精简护肤'], ai:false, ad:false,
     product:'温和视黄醇精华', hook:'别再一层一层往脸上糊了。', pain:'步骤太多、烂脸、成分打架', proof:'成分表逐条对比 + 28 天记录', cta:'主页置顶有新手排班表' },
